@@ -1,26 +1,35 @@
-"""ORM model: FetchedEmail — raw email cache for offline re-processing."""
+"""ORM model: FetchedEmail — raw email cache."""
 
 from datetime import datetime
+from typing import Optional
 
-from sqlalchemy import DateTime, Integer, String, Text, func
+from sqlalchemy import BigInteger, DateTime, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
 
 
 class FetchedEmail(Base):
-    """Stores the raw email payload fetched from Gmail.
+    """Raw email fetched from Gmail.
 
-    Used by ``--offline`` source flag to re-run the parse pipeline without
-    hitting the Gmail API again.
+    Cached for offline re-processing (--offline flag) without hitting the API again.
     """
 
     __tablename__ = "fetched_emails"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    gmail_message_id: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
-    sender: Mapped[str | None] = mapped_column(String, nullable=True)
-    subject: Mapped[str | None] = mapped_column(String, nullable=True)
-    body: Mapped[str | None] = mapped_column(Text, nullable=True)
-    received_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    fetched_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    gmail_message_id: Mapped[str] = mapped_column(String, primary_key=True)  # natural PK
+    thread_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    subject: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    sender: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    snippet: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    internal_date_ms: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    body_text: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Classification result stored alongside the raw email for debugging
+    classification: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    classification_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+    )

@@ -2,8 +2,9 @@
 
 import enum
 from datetime import datetime
+from typing import Optional
 
-from sqlalchemy import DateTime, Enum, Float, Integer, String, func
+from sqlalchemy import DateTime, Enum, Float, Index, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
@@ -14,24 +15,66 @@ class Direction(str, enum.Enum):
     CREDIT = "CREDIT"
 
 
+class Origin(str, enum.Enum):
+    EMAIL_ALERT = "EMAIL_ALERT"
+    STATEMENT = "STATEMENT"
+
+
 class Transaction(Base):
     __tablename__ = "transactions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # ── Source ────────────────────────────────────────────────────────────────
     gmail_message_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    provider: Mapped[str] = mapped_column(String, nullable=False)
-    account_id: Mapped[str] = mapped_column(String, nullable=False)
-    amount: Mapped[float] = mapped_column(Float, nullable=False)
-    direction: Mapped[Direction] = mapped_column(Enum(Direction), nullable=False)
-    merchant: Mapped[str | None] = mapped_column(String, nullable=True)
-    category: Mapped[str | None] = mapped_column(String, nullable=True)
-    channel: Mapped[str | None] = mapped_column(String, nullable=True)
-    transaction_type: Mapped[str | None] = mapped_column(String, nullable=True)
-    sub_type: Mapped[str | None] = mapped_column(String, nullable=True)
-    account_type: Mapped[str | None] = mapped_column(String, nullable=True)
-    status: Mapped[str | None] = mapped_column(String, nullable=True)
-    txn_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    utr_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    dedup_signature: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
     transacted_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    origin: Mapped[Origin] = mapped_column(Enum(Origin), nullable=False)
+
+    # ── Amount ────────────────────────────────────────────────────────────────
+    amount: Mapped[Optional[str]] = mapped_column(String, nullable=True)          # raw string from regex
+    amount_parsed: Mapped[float] = mapped_column(Float, nullable=False)           # numeric for calculations
+    currency: Mapped[str] = mapped_column(String(8), nullable=False, default="INR")
+    direction: Mapped[Direction] = mapped_column(Enum(Direction), nullable=False)
+
+    # ── Provider / Account ────────────────────────────────────────────────────
+    provider: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)  # e.g. HDFC, ICICI
+    account_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)    # SAVINGS, CREDIT_CARD, …
+    account_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    account_last4: Mapped[Optional[str]] = mapped_column(String(4), nullable=True)
+    card_last4: Mapped[Optional[str]] = mapped_column(String(4), nullable=True)
+    card_network: Mapped[Optional[str]] = mapped_column(String, nullable=True)    # VISA, MASTERCARD
+    card_brand: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+    # ── Transaction metadata ──────────────────────────────────────────────────
+    transaction_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    sub_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    status: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    txn_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    fee_amount: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # ── Merchant / Counterparty ───────────────────────────────────────────────
+    merchant: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    counterparty_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    counterparty_vpa: Mapped[Optional[str]] = mapped_column(String, nullable=True)   # UPI VPA
+    counterparty_account: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    counterparty_number: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    counterparty_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+    # ── Categorisation ────────────────────────────────────────────────────────
+    category: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+    # ── Financial extras ─────────────────────────────────────────────────────
+    balance: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    reward_points: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # ── Parser / classifier traceability ─────────────────────────────────────
+    parser_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    classification_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # ── Timestamps ───────────────────────────────────────────────────────────
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("provider", "txn_id", name="uq_provider_txn_id"),
+        Index("idx_transactions_category", "category"),
+    )
