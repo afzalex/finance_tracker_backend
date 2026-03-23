@@ -11,16 +11,28 @@ from backend.database import Base
 
 
 class Direction(str, enum.Enum):
+    """Money flow direction from the account holder's perspective."""
+
     DEBIT = "DEBIT"
     CREDIT = "CREDIT"
 
 
 class Origin(str, enum.Enum):
-    EMAIL_ALERT = "EMAIL_ALERT"
-    STATEMENT = "STATEMENT"
+    """How the transaction was discovered."""
+
+    EMAIL_ALERT = "EMAIL_ALERT"   # Parsed from a bank notification email
+    STATEMENT = "STATEMENT"        # Imported from a monthly PDF/CSV statement
 
 
 class Transaction(Base):
+    """A single financial transaction parsed from a bank alert email.
+
+    The ``provider`` + ``txn_id`` pair forms a unique constraint to prevent
+    duplicate rows when the same bank reference number appears in multiple emails.
+    ``amount`` stores the raw regex capture for auditing; ``amount_parsed`` is
+    the float used for all calculations.
+    """
+
     __tablename__ = "transactions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

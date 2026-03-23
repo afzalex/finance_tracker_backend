@@ -40,7 +40,13 @@ _PARSEABLE_TYPES = {"TRANSACTION_ALERT", "INVESTMENT_NOTICE"}
 # ── Public entry points ────────────────────────────────────────────────────────
 
 def run_ingest(args: argparse.Namespace) -> None:
-    """Main ingest pipeline."""
+    """Main ingest pipeline entry point.
+
+    Dispatches to one of three fetch modes based on CLI flags:
+    - ``--offline``  → re-process emails already stored in ``fetched_emails``.
+    - ``--unparsed`` → re-process the current ``unparsed_messages`` queue.
+    - (default)      → fetch from Gmail (incremental, ``--once``, or ``--force``).
+    """
     with SessionLocal() as db:
         if getattr(args, "offline", False):
             _ingest_offline(db)
@@ -94,6 +100,14 @@ def run_unparsed(args: argparse.Namespace) -> None:
 # ── Gmail fetch modes ──────────────────────────────────────────────────────────
 
 def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> None:
+    """Fetch emails from Gmail and run the processing pipeline.
+
+    Supports three sub-modes:
+    - ``--once N``  Fetch the N most recent labelled messages; cursor not updated.
+    - ``--force``   Ignore the stored cursor and re-fetch the full lookback window.
+    - (default)     Incremental fetch via Gmail history API from the stored cursor,
+                    falling back to a full fetch if the history ID has expired.
+    """
     try:
         client = GmailClient()
     except GmailAuthError as exc:
@@ -210,6 +224,20 @@ def _process_emails(
     *,
     store_emails: bool = True,
 ) -> dict:
+    """Classify, parse, and persist a list of emails.
+
+    Args:
+        emails:       Pre-extracted ``EmailContent`` objects to process.
+        db:           Active SQLAlchemy session (caller owns commit/rollback).
+        store_emails: When ``True`` (default), upsert each email into
+                      ``fetched_emails`` before processing.  Pass ``False``
+                      when re-processing already-stored emails to avoid
+                      touching the raw cache.
+
+    Returns:
+        A stats dict with keys:
+        ``fetched``, ``parsed``, ``unparsed``, ``skipped``, ``duplicate``.
+    """
     classifier = MessageClassifier(db)
     classifier.load_rules()
     parser = TransactionParser(db)
@@ -289,6 +317,7 @@ def _process_emails(
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
 def _upsert_fetched_email(db: Session, email: EmailContent) -> None:
+    """Insert a new ``FetchedEmail`` row, or update it in place if one already exists."""
     existing = db.get(FetchedEmail, email.gmail_message_id)
     if existing:
         existing.thread_id = email.thread_id
@@ -310,6 +339,7 @@ def _upsert_fetched_email(db: Session, email: EmailContent) -> None:
 
 
 def _set_email_classification(db: Session, gmail_message_id: str, message_type: str) -> None:
+    """Write the classifier's message-type label back to the stored ``FetchedEmail`` row."""
     row = db.get(FetchedEmail, gmail_message_id)
     if row:
         row.classification = message_type
@@ -323,6 +353,15 @@ def _upsert_unparsed(
     classification_id: Optional[int] = None,
     parser_id: Optional[int] = None,
 ) -> None:
+    """Record an email as unparsed, updating the existing row if one is already present.
+
+    Args:
+        reason:            Short string describing why parsing failed, e.g.
+                           ``"no_regex_match"``, ``"low_confidence:42"``,
+                           ``"classification:STATEMENT"``.
+        classification_id: FK to the ``classifications`` row that matched, if any.
+        parser_id:         FK to the ``parsers`` row that was attempted, if any.
+    """
     existing = (
         db.query(UnparsedMessage)
         .filter(UnparsedMessage.gmail_message_id == email.gmail_message_id)
@@ -342,6 +381,11 @@ def _upsert_unparsed(
 
 
 def _remove_unparsed(db: Session, gmail_message_id: str) -> None:
+    """Delete any ``UnparsedMessage`` row for the given message ID.
+
+    Called after a previously-failed message is successfully re-parsed, so
+    the unparsed queue stays tidy.
+    """
     db.query(UnparsedMessage).filter(
         UnparsedMessage.gmail_message_id == gmail_message_id
     ).delete(synchronize_session=False)
@@ -405,6 +449,7 @@ def _upsert_transaction(db: Session, fields: dict) -> str:
 
 
 def _save_cursor(db: Session, client: GmailClient) -> None:
+    """Persist the current Gmail ``historyId`` so the next run can do an incremental sync."""
     profile = client.get_profile()
     history_id = str(profile.get("historyId", ""))
     cursor = db.query(IngestCursor).first()
@@ -423,6 +468,7 @@ def _save_cursor(db: Session, client: GmailClient) -> None:
 # ── Display helpers ───────────────────────────────────────────────────────────
 
 def _print_stats(stats: dict) -> None:
+    """Print a one-line ingestion summary to stdout."""
     print(
         f"Done — fetched: {stats['fetched']}  "
         f"parsed: {stats['parsed']}  "
@@ -433,6 +479,7 @@ def _print_stats(stats: dict) -> None:
 
 
 def _list_unparsed(db: Session) -> None:
+    """Print the 50 most recent unparsed messages to stdout in tabular form."""
     rows = (
         db.query(UnparsedMessage)
         .order_by(UnparsedMessage.created_at.desc())
@@ -450,6 +497,7 @@ def _list_unparsed(db: Session) -> None:
 
 
 def _show_unparsed(db: Session, gmail_message_id: str) -> None:
+    """Print full details for a single unparsed message, including its raw body (first 2000 chars)."""
     row = (
         db.query(UnparsedMessage)
         .filter(UnparsedMessage.gmail_message_id == gmail_message_id)

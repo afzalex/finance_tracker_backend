@@ -27,6 +27,7 @@ import sys
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build and return the top-level argument parser with all sub-commands registered."""
     parser = argparse.ArgumentParser(
         prog="finance-tracker",
         description="Finance Tracker CLI — ingestion and reporting tool.",
@@ -88,6 +89,7 @@ def _add_source_flags(p: argparse.ArgumentParser) -> None:
 
 
 def main() -> None:
+    """Parse CLI arguments and dispatch to the appropriate sub-command handler."""
     parser = build_parser()
     args = parser.parse_args()
 

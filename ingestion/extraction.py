@@ -15,6 +15,18 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class EmailContent:
+    """Normalised representation of a single Gmail message.
+
+    Attributes:
+        gmail_message_id: Unique Gmail message ID (used as primary key in DB).
+        thread_id:        Gmail thread ID the message belongs to.
+        subject:          Decoded ``Subject`` header.
+        sender:           ``From`` header value (may include display name).
+        snippet:          Short Gmail-generated preview of the body.
+        internal_date_ms: Message receipt timestamp in milliseconds since epoch.
+        body_text:        Plain-text body (HTML converted to text when no plain part exists).
+    """
+
     gmail_message_id: str
     thread_id: str
     subject: str
@@ -67,6 +79,7 @@ def extract_email_content(message: Dict[str, Any]) -> EmailContent:
 # ── Private helpers ────────────────────────────────────────────────────────────
 
 def _collect_parts(payload: Dict[str, Any], wanted_types: List[str]) -> List[str]:
+    """Recursively walk a MIME payload tree and collect body data of the given MIME types."""
     texts: List[str] = []
     mime_type = payload.get("mimeType", "")
     body = payload.get("body", {}) or {}
@@ -79,6 +92,7 @@ def _collect_parts(payload: Dict[str, Any], wanted_types: List[str]) -> List[str
 
 
 def _decode_body(data: Optional[str]) -> str:
+    """Decode a URL-safe base64-encoded Gmail body part to a UTF-8 string."""
     if not data:
         return ""
     try:
@@ -92,6 +106,7 @@ def _decode_body(data: Optional[str]) -> str:
 
 
 def _html_to_text(html_content: str) -> str:
+    """Strip HTML tags and return collapsed plain text via BeautifulSoup."""
     if not html_content:
         return ""
     soup = BeautifulSoup(html_content, "html.parser")

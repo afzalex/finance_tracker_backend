@@ -11,6 +11,8 @@ from pydantic import BaseModel, ConfigDict
 
 
 class Direction(str, Enum):
+    """Money flow direction mirroring the ORM enum, exposed in API responses."""
+
     DEBIT = "DEBIT"
     CREDIT = "CREDIT"
 
@@ -18,6 +20,8 @@ class Direction(str, Enum):
 # ── Transaction ───────────────────────────────────────────────────────────────
 
 class TransactionBase(BaseModel):
+    """Core transaction fields shared by request and response schemas."""
+
     provider: str
     account_id: str
     amount: float
@@ -34,6 +38,8 @@ class TransactionBase(BaseModel):
 
 
 class TransactionRead(TransactionBase):
+    """Full transaction response including DB-assigned ``id`` and audit fields."""
+
     model_config = ConfigDict(from_attributes=True)
     id: int
     gmail_message_id: str
@@ -41,6 +47,8 @@ class TransactionRead(TransactionBase):
 
 
 class TransactionListResponse(BaseModel):
+    """Paginated wrapper returned by ``GET /api/v1/transactions``."""
+
     items: list[TransactionRead]
     total: int
     page: int
@@ -50,6 +58,8 @@ class TransactionListResponse(BaseModel):
 # ── Account ───────────────────────────────────────────────────────────────────
 
 class AccountRead(BaseModel):
+    """Account/card/wallet summary returned by ``GET /api/v1/accounts``."""
+
     model_config = ConfigDict(from_attributes=True)
     id: int
     provider: str
@@ -61,6 +71,8 @@ class AccountRead(BaseModel):
 # ── Stats / Analytics ─────────────────────────────────────────────────────────
 
 class MonthlyStats(BaseModel):
+    """Debit/credit/net totals for a single calendar month."""
+
     month: str  # "YYYY-MM"
     total_debit: float
     total_credit: float
@@ -68,18 +80,24 @@ class MonthlyStats(BaseModel):
 
 
 class CategoryBreakdown(BaseModel):
+    """Spending aggregated by transaction category for a time window."""
+
     category: str
     total: float
     transaction_count: int
 
 
 class MerchantSummary(BaseModel):
+    """Total spend and transaction count for a single merchant."""
+
     merchant: str
     total: float
     transaction_count: int
 
 
 class CashflowPoint(BaseModel):
+    """Income vs expense for a single calendar month (used in cashflow charts)."""
+
     month: str  # "YYYY-MM"
     income: float
     expense: float

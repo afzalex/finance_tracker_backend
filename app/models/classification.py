@@ -11,6 +11,15 @@ from backend.database import Base
 
 
 class MessageType(str, enum.Enum):
+    """Category assigned to an email by the classifier.
+
+    TRANSACTION_ALERT  — Bank debit/credit notification; sent to the parser.
+    INVESTMENT_NOTICE  — Mutual fund / stock alert; sent to the parser.
+    STATEMENT          — Monthly account statement; stored for future handling.
+    SINK               — Newsletters, OTPs, promos; silently discarded.
+    OTHER              — No rule matched; stored in the unparsed queue.
+    """
+
     TRANSACTION_ALERT = "TRANSACTION_ALERT"
     INVESTMENT_NOTICE = "INVESTMENT_NOTICE"
     STATEMENT = "STATEMENT"

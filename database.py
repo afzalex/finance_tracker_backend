@@ -21,7 +21,7 @@ engine = create_engine(
     settings.database_url,
     # SQLite-specific: enable WAL mode for better concurrency
     connect_args={"check_same_thread": False},
-    echo=settings.env == "development",
+    echo=settings.log_level.upper() == "DEBUG",
 )
 
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)

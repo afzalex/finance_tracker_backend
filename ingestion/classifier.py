@@ -29,6 +29,16 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ClassificationResult:
+    """Outcome of classifying a single email.
+
+    Attributes:
+        message_type:       One of the ``MessageType`` enum values as a string.
+        classification_id:  PK of the matching ``Classification`` row, or ``None``
+                            when the fallback OTHER rule applies.
+        extracted:          Named groups pulled by the rule's extract regexes
+                            (may be empty when no extract regex is configured).
+    """
+
     message_type: str
     classification_id: Optional[int]
     extracted: dict = field(default_factory=dict)

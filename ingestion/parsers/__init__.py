@@ -118,6 +118,12 @@ class TransactionParser:
     # ── Private ───────────────────────────────────────────────────────────────
 
     def _matches(self, row: Parser, sender: str, subject: str, body: str) -> bool:
+        """Return True if the parser's match regexes all pass for the given email fields.
+
+        A parser matches when:
+        - No match regex is ``None`` / empty AND evaluates to ``False``, AND
+        - At least one match regex is non-empty (parsers with no criteria at all are skipped).
+        """
         results = tuple(
             match_regex(pattern, text, empty_means_match=False)
             for pattern, text in (
@@ -138,6 +144,23 @@ class TransactionParser:
         internal_date_ms: int,
         classification_id: Optional[int],
     ) -> ParseResult:
+        """Run the parser's extract regexes against the email and build a ``ParseResult``.
+
+        Extraction steps:
+        1. Run ``body_extract_regex``, ``subject_extract_regex``, and
+           ``snippet_extract_regex`` (whichever are configured).
+        2. Merge named groups with body > subject > snippet precedence.
+        3. Resolve ``direction`` from ``txn_isdebit`` / ``txn_iscredit`` / ``direction`` groups.
+        4. Parse ``amount`` / ``txn_amount`` into a positive ``Decimal``.
+        5. Derive ``transacted_at`` from date/time groups or fall back to ``internal_date_ms``.
+        6. Apply parser-row defaults for ``provider``, ``account_type``, etc. when the
+           corresponding named groups are absent.
+        7. Run ``_find_account_suffix`` as a last-resort ``account_id`` fallback.
+        8. Compute and attach a confidence score.
+
+        Returns a ``ParseResult`` with ``success=False`` and a ``failure_reason`` string
+        when any mandatory field (direction, amount) cannot be determined.
+        """
         parser_id = row.id
 
         body_re = (row.body_extract_regex or "").strip()
@@ -250,6 +273,11 @@ class TransactionParser:
 # ── Module-level helpers ───────────────────────────────────────────────────────
 
 def _parse_amount(raw: Optional[str]) -> Optional[Decimal]:
+    """Extract the first numeric value from a raw amount string.
+
+    Accepts strings like ``"INR 1,234.56"``, ``"Rs.500"``, ``"1000.00"``.
+    Returns ``None`` when no positive number can be found.
+    """
     if not raw:
         return None
     m = re.search(r"([0-9][0-9,]*(?:\.[0-9]+)?)", raw)
@@ -270,6 +298,19 @@ def _parse_datetime(
     time_fmt: Optional[str],
     internal_date_ms: int,
 ) -> datetime:
+    """Resolve a transaction timestamp from extracted regex groups.
+
+    Resolution order:
+    1. ``time_str`` as a full ISO 8601 datetime.
+    2. ``date_str`` (or ``time_str``) parsed with ``date_fmt``, combined with
+       ``time_only_str`` parsed with ``time_fmt``.
+    3. Date-only result when no time component can be parsed.
+    4. Time component overlaid on the ``internal_date_ms`` fallback when only a
+       time is available.
+    5. ``internal_date_ms`` converted to UTC datetime as the final fallback.
+
+    Always returns a timezone-aware datetime (UTC).
+    """
     fallback = datetime.fromtimestamp(internal_date_ms / 1000.0, tz=timezone.utc)
 
     # 1. ISO 8601 full datetime
@@ -297,6 +338,10 @@ def _parse_datetime(
 
 
 def _parse_date(s: Optional[str], fmt: Optional[str]) -> Optional[datetime]:
+    """Parse a date string using an optional ``strptime`` format, with a DD/MM/YYYY fallback.
+
+    Returns a UTC-aware ``datetime`` at midnight, or ``None`` if parsing fails.
+    """
     if not s:
         return None
     s = s.strip()
@@ -319,6 +364,12 @@ def _parse_date(s: Optional[str], fmt: Optional[str]) -> Optional[datetime]:
 
 
 def _parse_time(s: Optional[str], fmt: Optional[str]) -> Optional[tuple[int, int, int]]:
+    """Parse a time string into an ``(hour, minute, second)`` tuple.
+
+    Tries the supplied ``strptime`` format first, then falls back to
+    ``HH:MM[:SS]`` regex matching.  Returns ``None`` if the string cannot
+    be parsed or the values are out of range.
+    """
     if not s:
         return None
     s = s.strip()
@@ -338,12 +389,22 @@ def _parse_time(s: Optional[str], fmt: Optional[str]) -> Optional[tuple[int, int
 
 
 def _normalize_currency(raw: Optional[str]) -> str:
+    """Map a raw currency string (e.g. ``"INR"``, ``"Rs"``, ``"₹"``) to an ISO code.
+
+    Defaults to ``"INR"`` when the currency cannot be determined — appropriate
+    for the current Indian bank notification corpus.
+    """
     if raw and ("inr" in raw.lower() or "rs" in raw.lower() or "₹" in raw):
         return "INR"
     return "INR"
 
 
 def _find_account_suffix(body: str, subject: str, snippet: str) -> Optional[str]:
+    """Search body, subject, and snippet for an "A/c XXXX" account identifier.
+
+    Searches in order (body first) and returns the first non-empty capture,
+    e.g. ``"XX9999"`` or ``"****1234"``.  Returns ``None`` when no pattern matches.
+    """
     for text in (body, subject, snippet):
         if not text:
             continue
@@ -356,12 +417,26 @@ def _find_account_suffix(body: str, subject: str, snippet: str) -> Optional[str]
 
 
 def _trim(s: Optional[str], max_len: int = 500) -> Optional[str]:
+    """Strip whitespace and truncate a string; return ``None`` for blank/empty input."""
     if not s or not s.strip():
         return None
     return s.strip()[:max_len]
 
 
 def _compute_confidence(fields: dict) -> int:
+    """Score a parsed field dict on a 0–100 scale based on which high-value fields are present.
+
+    Weights:
+        amount_parsed  25
+        direction      20
+        transacted_at  15
+        merchant       10
+        txn_id         10
+        account_id      8
+        provider        7
+        ─────────────────
+        maximum        95  (capped to 100)
+    """
     score = 0
     if fields.get("amount_parsed") and float(fields["amount_parsed"]) > 0:
         score += _W_AMOUNT

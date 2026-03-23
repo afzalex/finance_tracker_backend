@@ -7,6 +7,11 @@ from backend.app.routers import accounts, analytics, stats, transactions
 
 
 def create_app() -> FastAPI:
+    """Create, configure, and return the FastAPI application instance.
+
+    Registers all API routers under ``/api/v1`` and adds CORS middleware
+    permitting read-only access from local frontend dev servers.
+    """
     app = FastAPI(
         title="Finance Tracker API",
         version="2.0.0",
@@ -34,6 +39,7 @@ def create_app() -> FastAPI:
 
     @app.get("/health", tags=["Health"])
     async def health() -> dict:
+        """Liveness check — returns ``{"status": "ok"}`` when the server is running."""
         return {"status": "ok"}
 
     return app

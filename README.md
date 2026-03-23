@@ -58,7 +58,7 @@ Key variables:
 | `POLL_SECONDS` | `300` | Interval between Gmail polls in daemon mode |
 | `INITIAL_LOOKBACK_DAYS` | `30` | Look-back window on first ingest run |
 | `CONFIDENCE_THRESHOLD` | `50` | Minimum parse confidence (0–100) to accept a transaction |
-| `ENV` | `development` | `development` enables SQLAlchemy query logging |
+| `ENV` | `development` | Runtime environment label (`development` or `production`) |
 | `LOG_LEVEL` | `INFO` | Log verbosity: DEBUG, INFO, WARNING, ERROR |
 
 ### 5. Authenticate with Gmail
