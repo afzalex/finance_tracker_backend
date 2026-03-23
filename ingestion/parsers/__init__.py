@@ -347,7 +347,7 @@ def _find_account_suffix(body: str, subject: str, snippet: str) -> Optional[str]
     for text in (body, subject, snippet):
         if not text:
             continue
-        m = re.search(r"a/c\s*[*X]*([A-Za-z0-9]+)", text, re.IGNORECASE)
+        m = re.search(r"a/c\s*([*A-Za-z0-9]+)", text, re.IGNORECASE)
         if m:
             v = m.group(1).strip()
             if v:

@@ -9,7 +9,7 @@ Python backend for the Finance Tracker project. Comprises two things:
 
 ## Requirements
 
-- Python 3.11+
+- Python 3.11+ (3.13 recommended)
 - A Google Cloud project with the Gmail API enabled and an OAuth2 Desktop credentials JSON
 
 ---
