@@ -39,17 +39,24 @@ def _email(
     )
 
 
-def _seed_alert_setup(db: Session, *, provider: str = "HDFC") -> None:
+def _seed_alert_setup(db: Session, *, provider: str = "HDFC"):
     """Insert a TRANSACTION_ALERT classification and a matching HDFC parser."""
-    seed_classification(db, message_type="TRANSACTION_ALERT", sender_match_regex=r"hdfcbank")
-    seed_parser(db, sender_match_regex=r"hdfcbank",
-                body_extract_regex=_DEBIT_REGEX, provider=provider)
+    classification = seed_classification(
+        db, message_type="TRANSACTION_ALERT", sender_match_regex=r"hdfcbank"
+    )
+    parser = seed_parser(
+        db,
+        sender_match_regex=r"hdfcbank",
+        body_extract_regex=_DEBIT_REGEX,
+        provider=provider,
+    )
+    return classification, parser
 
 
 # ── Happy path ────────────────────────────────────────────────────────────────
 
 def test_email_parsed_into_transaction(db: Session) -> None:
-    _seed_alert_setup(db)
+    classification, parser = _seed_alert_setup(db)
     stats = _process_emails([_email()], db)
 
     assert stats["parsed"] == 1
@@ -64,6 +71,11 @@ def test_email_parsed_into_transaction(db: Session) -> None:
     assert txn.provider == "HDFC"
     assert txn.gmail_message_id == "msg1"
 
+    fetched = db.get(FetchedEmail, "msg1")
+    assert fetched is not None
+    assert fetched.classification_id == classification.id
+    assert fetched.parser_id == parser.id
+
 
 def test_email_stored_in_fetched_emails(db: Session) -> None:
     _seed_alert_setup(db)
@@ -76,17 +88,20 @@ def test_email_stored_in_fetched_emails(db: Session) -> None:
 
 
 def test_fetched_email_classification_is_set(db: Session) -> None:
-    _seed_alert_setup(db)
+    classification, _parser = _seed_alert_setup(db)
     _process_emails([_email()], db)
 
     row = db.get(FetchedEmail, "msg1")
     assert row.classification == "TRANSACTION_ALERT"
+    assert row.classification_id == classification.id
 
 
 # ── SINK ──────────────────────────────────────────────────────────────────────
 
 def test_sink_message_is_skipped(db: Session) -> None:
-    seed_classification(db, message_type="SINK", subject_match_regex=r"(?i)newsletter")
+    classification = seed_classification(
+        db, message_type="SINK", subject_match_regex=r"(?i)newsletter"
+    )
     email = _email(subject="Monthly Newsletter", body="Unsubscribe here")
     stats = _process_emails([email], db)
 
@@ -94,6 +109,10 @@ def test_sink_message_is_skipped(db: Session) -> None:
     assert stats["parsed"] == 0
     assert db.query(Transaction).count() == 0
     assert db.query(UnparsedMessage).count() == 0
+
+    fetched = db.get(FetchedEmail, email.gmail_message_id)
+    assert fetched is not None
+    assert fetched.classification_id == classification.id
 
 
 # ── OTHER / unclassified ──────────────────────────────────────────────────────
@@ -109,27 +128,50 @@ def test_other_classification_goes_to_unparsed(db: Session) -> None:
     assert row is not None
     assert "OTHER" in row.reason
 
+    fetched = db.get(FetchedEmail, _email().gmail_message_id)
+    assert fetched is not None
+    assert fetched.classification_id is None
+    assert fetched.parser_id is None
+
 
 def test_statement_classification_goes_to_unparsed(db: Session) -> None:
-    seed_classification(db, message_type="STATEMENT", subject_match_regex=r"(?i)statement")
+    classification = seed_classification(
+        db, message_type="STATEMENT", subject_match_regex=r"(?i)statement"
+    )
     email = _email(subject="Your March 2024 statement")
     stats = _process_emails([email], db)
 
     assert stats["unparsed"] == 1
     assert db.query(Transaction).count() == 0
 
+    fetched = db.get(FetchedEmail, email.gmail_message_id)
+    assert fetched is not None
+    assert fetched.classification_id == classification.id
+    assert fetched.parser_id is None
+
 
 # ── Parse failure ─────────────────────────────────────────────────────────────
 
 def test_parse_failure_goes_to_unparsed(db: Session) -> None:
     # Classification matches but body doesn't match parser regex
-    seed_classification(db, message_type="TRANSACTION_ALERT", sender_match_regex=r"hdfcbank")
-    seed_parser(db, sender_match_regex=r"hdfcbank",
-                body_extract_regex=r"PATTERN THAT NEVER MATCHES", provider="HDFC")
+    classification = seed_classification(
+        db, message_type="TRANSACTION_ALERT", sender_match_regex=r"hdfcbank"
+    )
+    parser = seed_parser(
+        db,
+        sender_match_regex=r"hdfcbank",
+        body_extract_regex=r"PATTERN THAT NEVER MATCHES",
+        provider="HDFC",
+    )
 
     stats = _process_emails([_email()], db)
     assert stats["unparsed"] == 1
     assert db.query(UnparsedMessage).first().reason == "no_regex_match"
+
+    fetched = db.get(FetchedEmail, "msg1")
+    assert fetched is not None
+    assert fetched.classification_id == classification.id
+    assert fetched.parser_id == parser.id
 
 
 # ── Low confidence ────────────────────────────────────────────────────────────
@@ -137,13 +179,18 @@ def test_parse_failure_goes_to_unparsed(db: Session) -> None:
 def test_low_confidence_goes_to_unparsed(db: Session, monkeypatch) -> None:
     # Force confidence threshold to 100 so any parse fails the check
     monkeypatch.setattr("backend.ingestion.pipeline.settings.confidence_threshold", 100)
-    _seed_alert_setup(db)
+    classification, parser = _seed_alert_setup(db)
     stats = _process_emails([_email()], db)
 
     assert stats["unparsed"] == 1
     assert db.query(Transaction).count() == 0
     row = db.query(UnparsedMessage).first()
     assert "low_confidence" in row.reason
+
+    fetched = db.get(FetchedEmail, "msg1")
+    assert fetched is not None
+    assert fetched.classification_id == classification.id
+    assert fetched.parser_id == parser.id
 
 
 # ── Duplicate deduplication ───────────────────────────────────────────────────
@@ -204,14 +251,22 @@ def test_multiple_emails_are_all_processed(db: Session) -> None:
 
 def test_successful_reparse_removes_from_unparsed(db: Session) -> None:
     # First pass: no parser → goes to unparsed
-    seed_classification(db, message_type="TRANSACTION_ALERT", sender_match_regex=r"hdfcbank")
+    classification = seed_classification(
+        db, message_type="TRANSACTION_ALERT", sender_match_regex=r"hdfcbank"
+    )
     stats1 = _process_emails([_email()], db)
     assert stats1["unparsed"] == 1
     assert db.query(UnparsedMessage).count() == 1
 
     # Add a parser and reprocess
-    seed_parser(db, sender_match_regex=r"hdfcbank",
-                body_extract_regex=_DEBIT_REGEX, provider="HDFC")
-    stats2 = _process_emails([_email()], db, store_emails=False)
+    parser = seed_parser(
+        db, sender_match_regex=r"hdfcbank", body_extract_regex=_DEBIT_REGEX, provider="HDFC"
+    )
+    stats2 = _process_emails([_email()], db)
     assert stats2["parsed"] == 1
     assert db.query(UnparsedMessage).count() == 0
+
+    fetched = db.get(FetchedEmail, "msg1")
+    assert fetched is not None
+    assert fetched.classification_id == classification.id
+    assert fetched.parser_id == parser.id

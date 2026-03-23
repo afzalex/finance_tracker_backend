@@ -7,7 +7,7 @@ All methods are read-only; never calls any write endpoint.
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Iterator, Optional
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -68,6 +68,40 @@ class GmailClient:
 
         logger.info("Listed %d messages (query=%r)", len(messages), query)
         return messages[:max_results]
+
+    def iter_message_stubs(
+        self, *, query: str = "", max_results: Optional[int] = None
+    ) -> Iterator[dict]:
+        """Yield message stubs one-by-one (id, threadId) via paginated listing."""
+        yielded = 0
+        page_token: Optional[str] = None
+
+        while True:
+            remaining = max_results - yielded if max_results is not None else 10**18
+            batch = min(500, int(remaining))
+            if batch <= 0:
+                return
+
+            kwargs: dict = {"userId": "me", "maxResults": batch}
+            if query:
+                kwargs["q"] = query
+            if page_token:
+                kwargs["pageToken"] = page_token
+
+            response = self._service.users().messages().list(**kwargs).execute()
+            chunk = response.get("messages", []) or []
+            for s in chunk:
+                msg_id = s.get("id")
+                if not msg_id:
+                    continue
+                yielded += 1
+                yield {"id": msg_id, "threadId": s.get("threadId")}
+                if max_results is not None and yielded >= max_results:
+                    return
+
+            page_token = response.get("nextPageToken")
+            if not page_token or not chunk:
+                return
 
     def get_message(self, message_id: str) -> dict:
         """Fetch the full message payload for a given Gmail message ID."""
@@ -136,3 +170,44 @@ class GmailClient:
             "History fetch from %s returned %d new messages", start_history_id, len(unique)
         )
         return unique
+
+    def iter_history_message_stubs(
+        self, *, start_history_id: str, label_id: Optional[str] = None
+    ) -> Iterator[dict]:
+        """Yield unique message stubs from Gmail history (deduped by message id)."""
+        kwargs: dict = {
+            "userId": "me",
+            "startHistoryId": start_history_id,
+            "historyTypes": ["messageAdded"],
+        }
+        if label_id:
+            kwargs["labelId"] = label_id
+
+        seen: set[str] = set()
+        try:
+            response = self._service.users().history().list(**kwargs).execute()
+            while response:
+                for record in response.get("history", []) or []:
+                    for added in record.get("messagesAdded", []) or []:
+                        msg = added.get("message", {}) or {}
+                        msg_id = msg.get("id")
+                        if msg_id and msg_id not in seen:
+                            seen.add(msg_id)
+                            yield {"id": msg_id, "threadId": msg.get("threadId")}
+
+                page_token = response.get("nextPageToken")
+                if not page_token:
+                    break
+                response = (
+                    self._service.users()
+                    .history()
+                    .list(**kwargs, pageToken=page_token)
+                    .execute()
+                )
+        except HttpError as exc:
+            if exc.resp.status == 404:
+                raise HistoryExpiredError(
+                    f"Gmail history ID {start_history_id!r} has expired; "
+                    "a full re-fetch is required."
+                ) from exc
+            raise

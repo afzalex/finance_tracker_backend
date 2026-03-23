@@ -29,6 +29,10 @@ class FetchedEmail(Base):
     classification: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     classification_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # Enrichment ids written by the streaming pipeline (may be NULL when unknown)
+    classification_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    parser_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
