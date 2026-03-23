@@ -4,38 +4,135 @@ Wraps google-api-python-client to list and fetch messages.
 All methods are read-only; never calls any write endpoint.
 """
 
+from __future__ import annotations
+
+import logging
+from typing import Optional
+
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 from backend.ingestion.gmail.auth import get_credentials
 
+logger = logging.getLogger(__name__)
+
+
+class HistoryExpiredError(Exception):
+    """Raised when the stored Gmail history ID is too old and can no longer be used."""
+
 
 class GmailClient:
-    """Minimal read-only Gmail API client.
-
-    TODO: Implement list_messages, get_message, and history-based incremental fetch.
-    """
+    """Minimal read-only Gmail API client."""
 
     def __init__(self) -> None:
         creds = get_credentials()
         self._service = build("gmail", "v1", credentials=creds)
 
-    def list_messages(self, query: str = "", max_results: int = 100) -> list[dict]:
-        """List message metadata matching a query.
+    # ── Public API ────────────────────────────────────────────────────────────
 
-        TODO: Implement with pagination support.
+    def get_profile(self) -> dict:
+        """Return the authenticated user's Gmail profile (includes current historyId)."""
+        return self._service.users().getProfile(userId="me").execute()
+
+    def get_label_id(self, label_name: str) -> Optional[str]:
+        """Resolve a label name (e.g. "Finance") to its internal Gmail label ID."""
+        response = self._service.users().labels().list(userId="me").execute()
+        for label in response.get("labels", []):
+            if label.get("name", "").lower() == label_name.lower():
+                return label.get("id")
+        return None
+
+    def list_messages(self, query: str = "", max_results: int = 100) -> list[dict]:
+        """Return up to max_results message stubs ({id, threadId}) matching query.
+
+        Pages through the API automatically.
         """
-        raise NotImplementedError
+        messages: list[dict] = []
+        page_token: Optional[str] = None
+
+        while len(messages) < max_results:
+            batch = min(500, max_results - len(messages))
+            kwargs: dict = {"userId": "me", "maxResults": batch}
+            if query:
+                kwargs["q"] = query
+            if page_token:
+                kwargs["pageToken"] = page_token
+
+            response = self._service.users().messages().list(**kwargs).execute()
+            chunk = response.get("messages", [])
+            messages.extend(chunk)
+
+            page_token = response.get("nextPageToken")
+            if not page_token or not chunk:
+                break
+
+        logger.info("Listed %d messages (query=%r)", len(messages), query)
+        return messages[:max_results]
 
     def get_message(self, message_id: str) -> dict:
-        """Fetch the full message payload for a given Gmail message ID.
+        """Fetch the full message payload for a given Gmail message ID."""
+        return (
+            self._service.users()
+            .messages()
+            .get(userId="me", id=message_id, format="full")
+            .execute()
+        )
 
-        TODO: Implement with exponential backoff retry.
+    def get_history(
+        self,
+        start_history_id: str,
+        label_id: Optional[str] = None,
+    ) -> list[dict]:
+        """Return message stubs ({id, threadId}) for messages added since start_history_id.
+
+        Raises:
+            HistoryExpiredError: If the history ID has expired (Gmail returns 404).
+                                 Caller should fall back to a full list_messages fetch.
         """
-        raise NotImplementedError
+        kwargs: dict = {
+            "userId": "me",
+            "startHistoryId": start_history_id,
+            "historyTypes": ["messageAdded"],
+        }
+        if label_id:
+            kwargs["labelId"] = label_id
 
-    def get_history(self, start_history_id: str) -> list[dict]:
-        """Return messages added since start_history_id (incremental sync).
+        messages: list[dict] = []
+        try:
+            response = self._service.users().history().list(**kwargs).execute()
+            while response:
+                for record in response.get("history", []):
+                    for added in record.get("messagesAdded", []):
+                        msg = added.get("message", {})
+                        if msg.get("id"):
+                            messages.append({"id": msg["id"], "threadId": msg.get("threadId")})
 
-        TODO: Implement history.list pagination.
-        """
-        raise NotImplementedError
+                page_token = response.get("nextPageToken")
+                if not page_token:
+                    break
+                response = (
+                    self._service.users()
+                    .history()
+                    .list(**kwargs, pageToken=page_token)
+                    .execute()
+                )
+        except HttpError as exc:
+            if exc.resp.status == 404:
+                raise HistoryExpiredError(
+                    f"Gmail history ID {start_history_id!r} has expired; "
+                    "a full re-fetch is required."
+                ) from exc
+            raise
+
+        # Deduplicate by message ID (history can contain duplicates)
+        seen: set[str] = set()
+        unique: list[dict] = []
+        for m in messages:
+            if m["id"] not in seen:
+                seen.add(m["id"])
+                unique.append(m)
+
+        logger.info(
+            "History fetch from %s returned %d new messages", start_history_id, len(unique)
+        )
+        return unique
