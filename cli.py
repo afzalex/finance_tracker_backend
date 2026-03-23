@@ -23,6 +23,7 @@ Source flags (mutually exclusive; not applicable to --poll)
 """
 
 import argparse
+import logging
 import sys
 
 
@@ -90,6 +91,12 @@ def _add_source_flags(p: argparse.ArgumentParser) -> None:
 
 def main() -> None:
     """Parse CLI arguments and dispatch to the appropriate sub-command handler."""
+    from backend.config import settings  # noqa: PLC0415
+    logging.basicConfig(
+        level=settings.log_level.upper(),
+        format="%(asctime)s %(levelname)s %(name)s — %(message)s",
+    )
+
     parser = build_parser()
     args = parser.parse_args()
 

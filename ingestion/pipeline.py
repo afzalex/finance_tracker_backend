@@ -49,11 +49,11 @@ def run_ingest(args: argparse.Namespace) -> None:
     """
     with SessionLocal() as db:
         if getattr(args, "offline", False):
-            _ingest_offline(db)
+            _ingest_offline(db) # ingest from fetched_emails table
         elif getattr(args, "unparsed", False):
-            _ingest_from_unparsed(db)
+            _ingest_from_unparsed(db) # ingest from unparsed_messages table
         else:
-            _ingest_from_gmail(db, args)
+            _ingest_from_gmail(db, args) # ingest from gmail
 
 
 def run_poll() -> None:
