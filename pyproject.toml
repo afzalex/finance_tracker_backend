@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "finance-tracker"
+version = "0.1.0"
+requires-python = ">=3.9"
+
+[tool.setuptools.packages.find]
+# The `backend` package lives one level up from this file (finance-tracker/).
+where = [".."]
+include = ["backend*"]

@@ -22,10 +22,15 @@ class Settings(BaseSettings):
     # ── Gmail ─────────────────────────────────────────────────────────────────
     gmail_credentials_file: str = "secrets/credentials.json"
     gmail_token_file: str = "secrets/token.json"
+    gmail_label: str = "Finance"
 
     # ── Ingestion ─────────────────────────────────────────────────────────────
     poll_seconds: int = 300
     initial_lookback_days: int = 30
+    confidence_threshold: int = 50
+
+    # ── Logging ───────────────────────────────────────────────────────────────
+    log_level: str = "INFO"
 
     # ── API ───────────────────────────────────────────────────────────────────
     api_host: str = "0.0.0.0"

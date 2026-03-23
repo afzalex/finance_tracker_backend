@@ -16,6 +16,8 @@ Python backend for the Finance Tracker project. Comprises two things:
 
 ## Setup
 
+All commands below are run from inside the `backend/` directory.
+
 ### 1. Create and activate a virtual environment
 
 ```bash
@@ -29,12 +31,20 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3. Configure environment
+### 3. Install the package
 
-Copy the example env file from the project root and fill in your values:
+This registers the `backend` package in the venv so the CLI works from any directory:
 
 ```bash
-cp ../.env.example ../.env
+pip install -e .
+```
+
+### 4. Configure environment
+
+Copy the example env file and fill in your values:
+
+```bash
+cp .env.example .env
 ```
 
 Key variables:
@@ -44,19 +54,26 @@ Key variables:
 | `DATABASE_URL` | `sqlite:///./data/finance.db` | SQLite DB path |
 | `GMAIL_CREDENTIALS_FILE` | `secrets/credentials.json` | OAuth2 client secret JSON from Google Cloud Console |
 | `GMAIL_TOKEN_FILE` | `secrets/token.json` | Token file written after first login |
+| `GMAIL_LABEL` | `Finance` | Gmail label to restrict ingestion to |
 | `POLL_SECONDS` | `300` | Interval between Gmail polls in daemon mode |
 | `INITIAL_LOOKBACK_DAYS` | `30` | Look-back window on first ingest run |
+| `CONFIDENCE_THRESHOLD` | `50` | Minimum parse confidence (0–100) to accept a transaction |
 | `ENV` | `development` | `development` enables SQLAlchemy query logging |
+| `LOG_LEVEL` | `INFO` | Log verbosity: DEBUG, INFO, WARNING, ERROR |
 
-### 4. Authenticate with Gmail
+### 5. Authenticate with Gmail
 
-Run the OAuth flow once to generate `secrets/token.json`:
+Download your OAuth2 Desktop client secret from Google Cloud Console
+(APIs & Services → Credentials → OAuth 2.0 Client IDs → Desktop app)
+and save it to `secrets/credentials.json`. Then run:
 
 ```bash
-python -m backend.ingestion.gmail.auth
+python -m backend.cli auth
 ```
 
-### 5. Run database migrations
+This opens a browser window for Google sign-in. After you grant access, the token is saved to `secrets/token.json` and subsequent runs will refresh it automatically.
+
+### 6. Run database migrations
 
 ```bash
 alembic upgrade head
@@ -66,11 +83,17 @@ alembic upgrade head
 
 ## CLI Usage
 
-All commands are run from the **project root** (one level above this directory).
-
 ```bash
 python -m backend.cli <command> [options]
 ```
+
+### `auth` — authenticate with Gmail
+
+```bash
+python -m backend.cli auth
+```
+
+Run once on first setup, or again if the token expires and cannot be refreshed automatically.
 
 ### `ingest` — fetch and store transactions
 
@@ -173,6 +196,7 @@ backend/
 ├── cli.py               # CLI entry point
 ├── config.py            # Pydantic settings
 ├── database.py          # SQLAlchemy engine + session
+├── pyproject.toml       # Package definition (run pip install -e . once)
 ├── Dockerfile
 └── requirements.txt
 ```

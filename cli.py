@@ -2,6 +2,7 @@
 
 Commands
 --------
+auth        Authenticate with the mail provider (opens browser on first run).
 ingest      Fetch new emails, classify, parse, write to ledger.
 poll        Run ingest continuously on POLL_SECONDS interval.
 export      Export transactions to CSV.
@@ -31,6 +32,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="Finance Tracker CLI — ingestion and reporting tool.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    # ── auth ──────────────────────────────────────────────────────────────────
+    sub.add_parser(
+        "auth",
+        help="Authenticate with the mail provider (opens browser on first run).",
+    )
 
     # ── ingest ────────────────────────────────────────────────────────────────
     ingest_p = sub.add_parser("ingest", help="Fetch and store transactions from Gmail.")
@@ -84,7 +91,14 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    if args.command == "ingest":
+    if args.command == "auth":
+        from backend.ingestion.gmail.auth import GmailAuthError, run_oauth_flow  # noqa: PLC0415
+        try:
+            run_oauth_flow()
+        except GmailAuthError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(1)
+    elif args.command == "ingest":
         from backend.ingestion.pipeline import run_ingest  # noqa: PLC0415
         run_ingest(args)
     elif args.command == "poll":
