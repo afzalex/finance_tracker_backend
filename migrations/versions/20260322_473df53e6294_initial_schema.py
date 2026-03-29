@@ -31,7 +31,7 @@ def upgrade() -> None:
     sa.Column('subject_extract_regex', sa.Text(), nullable=True),
     sa.Column('body_extract_regex', sa.Text(), nullable=True),
     sa.Column('snippet_extract_regex', sa.Text(), nullable=True),
-    sa.Column('is_active', sa.Boolean(), nullable=False),
+    sa.Column('is_active', sa.Boolean(), server_default=sa.text('true'), nullable=False),
     sa.Column('created_at', sa.DateTime(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.Column('updated_at', sa.DateTime(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.PrimaryKeyConstraint('id')
@@ -77,7 +77,7 @@ def upgrade() -> None:
     sa.Column('transaction_type', sa.String(), nullable=True),
     sa.Column('sub_type', sa.String(), nullable=True),
     sa.Column('status', sa.String(), nullable=True),
-    sa.Column('is_active', sa.Boolean(), nullable=False),
+    sa.Column('is_active', sa.Boolean(), server_default=sa.text('true'), nullable=False),
     sa.Column('created_at', sa.DateTime(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.Column('updated_at', sa.DateTime(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.PrimaryKeyConstraint('id')

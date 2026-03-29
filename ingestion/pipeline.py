@@ -17,10 +17,12 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Iterator, Optional
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.app.models.fetched_email import FetchedEmail
+from backend.app.models.fetched_email_enrichment import FetchedEmailEnrichment
 from backend.app.models.ingest_cursor import IngestCursor
 from backend.app.models.transaction import Transaction
 from backend.app.models.unparsed_message import UnparsedMessage
@@ -103,10 +105,13 @@ def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> None:
     """Fetch emails from Gmail and run the processing pipeline.
 
     Supports three sub-modes:
-    - ``--once N``  Fetch the N most recent labelled messages; cursor not updated.
+    - ``--once N``  Fetch the N most recent labelled messages; ingest cursor not updated.
     - ``--force``   Ignore the stored cursor and re-fetch the full lookback window.
     - (default)     Incremental fetch via Gmail history API from the stored cursor,
                     falling back to a full fetch if the history ID has expired.
+
+    After all messages are processed, the Gmail ingest cursor is saved once (not for
+    ``--once``); each message is still committed to the DB as it is processed.
     """
     try:
         client = GmailClient()
@@ -124,29 +129,11 @@ def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> None:
     stats = dict(fetched=0, parsed=0, unparsed=0, skipped=0, duplicate=0)
 
     if once_n is not None:
-        # --once N: fetch N most recent messages, do NOT update cursor
         query = f"label:{settings.gmail_label}"
-        for stub in client.iter_message_stubs(query=query, max_results=once_n):
-            msg = client.get_message(stub["id"])
-            email = extract_email_content(msg)
-            _process_one_email(
-                email=email,
-                db=db,
-                classifier=classifier,
-                parser=parser,
-                store_emails=True,
-                stats=stats,
-            )
-            db.commit()
-
-        _print_stats(stats)
-        return
-
-    if force:
-        # --force: ignore cursor, fetch full lookback window
+        stubs_iter = client.iter_message_stubs(query=query, max_results=once_n)
+    elif force:
         stubs_iter = _fetch_full(client)
     else:
-        # Default: incremental via history, or full fetch if no cursor
         cursor = db.query(IngestCursor).first()
         history_id = cursor.gmail_history_id if cursor else None
 
@@ -162,9 +149,7 @@ def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> None:
         else:
             stubs_iter = _fetch_full(client)
 
-    processed_any = False
     for stub in stubs_iter:
-        processed_any = True
         msg = client.get_message(stub["id"])
         email = extract_email_content(msg)
         _process_one_email(
@@ -172,12 +157,11 @@ def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> None:
             db=db,
             classifier=classifier,
             parser=parser,
-            store_emails=True,
             stats=stats,
         )
-        _save_cursor(db, client)  # commits + advances history cursor
+        db.commit()
 
-    if not processed_any:
+    if once_n is None:
         _save_cursor(db, client)
 
     _print_stats(stats)
@@ -197,47 +181,55 @@ def _ingest_offline(db: Session) -> None:
     rows = db.query(FetchedEmail).order_by(FetchedEmail.internal_date_ms.asc()).all()
     emails = [
         EmailContent(
-            gmail_message_id=r.gmail_message_id,
+            mail_id=r.mail_id,
             thread_id=r.thread_id or "",
             subject=r.subject or "",
             sender=r.sender or "",
             snippet=r.snippet or "",
             internal_date_ms=r.internal_date_ms,
             body_text=r.body_text or "",
+            fetched_email_id=r.id,
         )
         for r in rows
     ]
-    stats = _process_emails(emails, db, store_emails=False)
+    stats = _process_emails(emails, db)
     _print_stats(stats)
 
 
 def _ingest_from_unparsed(db: Session) -> None:
     """Re-classify and re-parse messages currently in the unparsed queue."""
-    rows = (
-        db.query(UnparsedMessage)
-        .join(FetchedEmail, FetchedEmail.gmail_message_id == UnparsedMessage.gmail_message_id)
-        .order_by(UnparsedMessage.created_at.asc())
-        .all()
-    )
-    gmail_ids = [r.gmail_message_id for r in rows]
-    fetched = (
-        db.query(FetchedEmail)
-        .filter(FetchedEmail.gmail_message_id.in_(gmail_ids))
-        .all()
-    )
-    emails = [
-        EmailContent(
-            gmail_message_id=r.gmail_message_id,
-            thread_id=r.thread_id or "",
-            subject=r.subject or "",
-            sender=r.sender or "",
-            snippet=r.snippet or "",
-            internal_date_ms=r.internal_date_ms,
-            body_text=r.body_text or "",
+    rows = db.query(UnparsedMessage).order_by(UnparsedMessage.created_at.asc()).all()
+    if not rows:
+        _print_stats(dict(fetched=0, parsed=0, unparsed=0, skipped=0, duplicate=0))
+        return
+    fe_ids = [u.fetched_email_id for u in rows]
+    fetched_map = {
+        f.id: f
+        for f in db.query(FetchedEmail).filter(FetchedEmail.id.in_(fe_ids)).all()
+    }
+    emails: list[EmailContent] = []
+    for u in rows:
+        r = fetched_map.get(u.fetched_email_id)
+        if r is None:
+            logger.warning(
+                "UnparsedMessage id=%s references missing fetched_email_id=%s",
+                u.id,
+                u.fetched_email_id,
+            )
+            continue
+        emails.append(
+            EmailContent(
+                mail_id=r.mail_id,
+                thread_id=r.thread_id or "",
+                subject=r.subject or "",
+                sender=r.sender or "",
+                snippet=r.snippet or "",
+                internal_date_ms=r.internal_date_ms,
+                body_text=r.body_text or "",
+                fetched_email_id=r.id,
+            )
         )
-        for r in fetched
-    ]
-    stats = _process_emails(emails, db, store_emails=False)
+    stats = _process_emails(emails, db)
     _print_stats(stats)
 
 
@@ -258,29 +250,35 @@ def _process_one_email(
     db: Session,
     classifier: MessageClassifier,
     parser: TransactionParser,
-    store_emails: bool,
     stats: dict,
 ) -> None:
-    """Process a single message; does not commit."""
+    """Process a single message; does not commit.
+
+    Ensures a ``fetched_emails`` row exists (insert-only for new ``mail_id``), resets
+    and then upserts ``fetched_email_enrichments`` for this processing pass.
+    """
     stats["fetched"] += 1
 
-    if store_emails:
-        _upsert_fetched_email(db, email)  # overwrite semantics
+    _insert_fetched_email_raw(db, email)
+    assert email.fetched_email_id is not None
+    _reset_fetched_email_enrichment(db, email.fetched_email_id)
 
     result = classifier.classify(
         email.sender, email.subject, email.body_text, email.snippet
     )
 
-    if store_emails:
-        _set_email_classification(
-            db,
-            email.gmail_message_id,
-            result.message_type,
-            classification_id=result.classification_id,
-        )
+    _set_email_classification(
+        db,
+        email.fetched_email_id,
+        result.message_type,
+        classification_id=result.classification_id,
+        classification_reason=result.classification_reason,
+    )
 
     if result.message_type == "SINK":
         stats["skipped"] += 1
+        # Enrichment already holds classification_id / classification / classification_reason.
+        _remove_unparsed(db, email.fetched_email_id)
         return
 
     if result.message_type not in _PARSEABLE_TYPES:
@@ -304,8 +302,7 @@ def _process_one_email(
         result.classification_id,
     )
 
-    if store_emails:
-        _set_email_parser_id(db, email.gmail_message_id, parse_result.parser_id)
+    _set_email_parser_id(db, email.fetched_email_id, parse_result.parser_id)
 
     try:
         if not parse_result.success:
@@ -322,14 +319,14 @@ def _process_one_email(
                 parser_id=parse_result.parser_id,
             )
 
-        fields["gmail_message_id"] = email.gmail_message_id
+        fields["mail_id"] = email.mail_id
         saved = _upsert_transaction(db, fields)
         if saved == "duplicate":
             stats["duplicate"] += 1
-            _remove_unparsed(db, email.gmail_message_id)
+            _remove_unparsed(db, email.fetched_email_id)
         else:
             stats["parsed"] += 1
-            _remove_unparsed(db, email.gmail_message_id)
+            _remove_unparsed(db, email.fetched_email_id)
     except _ParserAttemptError as exc:
         _upsert_unparsed(
             db,
@@ -344,10 +341,12 @@ def _process_one_email(
 def _process_emails(
     emails: list[EmailContent],
     db: Session,
-    *,
-    store_emails: bool = True,
 ) -> dict:
-    """Classify, parse, and persist a list of emails."""
+    """Classify, parse, and persist a list of emails.
+
+    For each message: upsert raw cache row if needed, refresh enrichment, then
+    classify / parse / persist transactions or unparsed rows.
+    """
     classifier = MessageClassifier(db)
     classifier.load_rules()
     parser = TransactionParser(db)
@@ -361,7 +360,6 @@ def _process_emails(
             db=db,
             classifier=classifier,
             parser=parser,
-            store_emails=store_emails,
             stats=stats,
         )
 
@@ -371,54 +369,67 @@ def _process_emails(
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
-def _upsert_fetched_email(db: Session, email: EmailContent) -> None:
-    """Insert a new ``FetchedEmail`` row or overwrite enrichment in place."""
-    existing = db.get(FetchedEmail, email.gmail_message_id)
-    if existing:
-        existing.thread_id = email.thread_id
-        existing.subject = email.subject
-        existing.sender = email.sender
-        existing.snippet = email.snippet
-        existing.internal_date_ms = email.internal_date_ms
-        existing.body_text = email.body_text
-        # Overwrite semantics: clear enrichment fields before re-classifying.
-        existing.classification = None
-        existing.classification_reason = None
-        existing.classification_id = None
-        existing.parser_id = None
+def _insert_fetched_email_raw(db: Session, email: EmailContent) -> None:
+    """Insert raw payload once per ``mail_id``; never update existing rows."""
+    existing = db.execute(
+        select(FetchedEmail).where(FetchedEmail.mail_id == email.mail_id)
+    ).scalar_one_or_none()
+    if existing is not None:
+        email.fetched_email_id = existing.id
+        return
+    row = FetchedEmail(
+        mail_id=email.mail_id,
+        thread_id=email.thread_id,
+        subject=email.subject,
+        sender=email.sender,
+        snippet=email.snippet,
+        internal_date_ms=email.internal_date_ms,
+        body_text=email.body_text,
+    )
+    db.add(row)
+    db.flush()
+    email.fetched_email_id = row.id
+
+
+def _reset_fetched_email_enrichment(db: Session, fetched_email_id: int) -> None:
+    """Clear enrichment for this run (insert row if missing)."""
+    row = db.get(FetchedEmailEnrichment, fetched_email_id)
+    if row is None:
+        db.add(
+            FetchedEmailEnrichment(
+                fetched_email_id=fetched_email_id,
+                classification_id=None,
+                classification=None,
+                classification_reason=None,
+                parser_id=None,
+            )
+        )
     else:
-        db.add(FetchedEmail(
-            gmail_message_id=email.gmail_message_id,
-            thread_id=email.thread_id,
-            subject=email.subject,
-            sender=email.sender,
-            snippet=email.snippet,
-            internal_date_ms=email.internal_date_ms,
-            body_text=email.body_text,
-            classification=None,
-            classification_reason=None,
-            classification_id=None,
-            parser_id=None,
-        ))
+        row.classification_id = None
+        row.classification = None
+        row.classification_reason = None
+        row.parser_id = None
 
 
 def _set_email_classification(
     db: Session,
-    gmail_message_id: str,
+    fetched_email_id: int,
     message_type: str,
     *,
     classification_id: Optional[int],
+    classification_reason: Optional[str] = None,
 ) -> None:
-    """Write the classifier result back to the stored ``FetchedEmail`` row."""
-    row = db.get(FetchedEmail, gmail_message_id)
+    """Write the classifier result to ``fetched_email_enrichments``."""
+    row = db.get(FetchedEmailEnrichment, fetched_email_id)
     if row:
         row.classification = message_type
         row.classification_id = classification_id
+        row.classification_reason = classification_reason
 
 
-def _set_email_parser_id(db: Session, gmail_message_id: str, parser_id: Optional[int]) -> None:
+def _set_email_parser_id(db: Session, fetched_email_id: int, parser_id: Optional[int]) -> None:
     """Write the chosen parser id (even when parsing later fails)."""
-    row = db.get(FetchedEmail, gmail_message_id)
+    row = db.get(FetchedEmailEnrichment, fetched_email_id)
     if row:
         row.parser_id = parser_id
 
@@ -440,9 +451,16 @@ def _upsert_unparsed(
         classification_id: FK to the ``classifications`` row that matched, if any.
         parser_id:         FK to the ``parsers`` row that was attempted, if any.
     """
+    if email.fetched_email_id is None:
+        logger.warning(
+            "Cannot persist unparsed row without fetched_email_id (mail_id=%r)",
+            email.mail_id,
+        )
+        return
+    fe_id = email.fetched_email_id
     existing = (
         db.query(UnparsedMessage)
-        .filter(UnparsedMessage.gmail_message_id == email.gmail_message_id)
+        .filter(UnparsedMessage.fetched_email_id == fe_id)
         .first()
     )
     if existing:
@@ -451,21 +469,23 @@ def _upsert_unparsed(
         existing.parser_id = parser_id
     else:
         db.add(UnparsedMessage(
-            gmail_message_id=email.gmail_message_id,
+            fetched_email_id=fe_id,
             reason=reason,
             classification_id=classification_id,
             parser_id=parser_id,
         ))
 
 
-def _remove_unparsed(db: Session, gmail_message_id: str) -> None:
-    """Delete any ``UnparsedMessage`` row for the given message ID.
+def _remove_unparsed(db: Session, fetched_email_id: Optional[int]) -> None:
+    """Delete any ``UnparsedMessage`` row for the given fetched email id.
 
     Called after a previously-failed message is successfully re-parsed, so
     the unparsed queue stays tidy.
     """
+    if fetched_email_id is None:
+        return
     db.query(UnparsedMessage).filter(
-        UnparsedMessage.gmail_message_id == gmail_message_id
+        UnparsedMessage.fetched_email_id == fetched_email_id
     ).delete(synchronize_session=False)
 
 
@@ -486,7 +506,7 @@ def _upsert_transaction(db: Session, fields: dict) -> str:
             return "duplicate"
 
     txn = Transaction(
-        gmail_message_id=fields["gmail_message_id"],
+        mail_id=fields["mail_id"],
         transacted_at=fields["transacted_at"],
         origin=fields["origin"],
         amount=fields.get("amount"),
@@ -567,34 +587,44 @@ def _list_unparsed(db: Session) -> None:
     if not rows:
         print("No unparsed messages.")
         return
-    print(f"{'ID':<6}  {'Gmail ID':<24}  {'Reason':<40}  {'Created'}")
+    print(f"{'ID':<6}  {'Mail ID':<24}  {'Reason':<40}  {'Created'}")
     print("-" * 90)
+    fe_ids = [r.fetched_email_id for r in rows]
+    fe_map = {
+        f.id: f.mail_id
+        for f in db.query(FetchedEmail).filter(FetchedEmail.id.in_(fe_ids)).all()
+    }
     for r in rows:
         created = r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else ""
-        print(f"{r.id:<6}  {r.gmail_message_id:<24}  {(r.reason or ''):<40}  {created}")
+        mid = fe_map.get(r.fetched_email_id, "?")
+        print(f"{r.id:<6}  {mid:<24}  {(r.reason or ''):<40}  {created}")
 
 
-def _show_unparsed(db: Session, gmail_message_id: str) -> None:
+def _show_unparsed(db: Session, mail_id: str) -> None:
     """Print full details for a single unparsed message, including its raw body (first 2000 chars)."""
+    fe = db.execute(
+        select(FetchedEmail).where(FetchedEmail.mail_id == mail_id)
+    ).scalar_one_or_none()
+    if fe is None:
+        print(f"No fetched email with mail_id {mail_id!r}")
+        return
     row = (
         db.query(UnparsedMessage)
-        .filter(UnparsedMessage.gmail_message_id == gmail_message_id)
+        .filter(UnparsedMessage.fetched_email_id == fe.id)
         .first()
     )
     if not row:
-        print(f"No unparsed message with id {gmail_message_id!r}")
+        print(f"No unparsed message for mail_id {mail_id!r}")
         return
 
-    email = db.get(FetchedEmail, gmail_message_id)
-    print(f"Gmail ID   : {row.gmail_message_id}")
+    print(f"Mail ID    : {fe.mail_id}")
     print(f"Reason     : {row.reason}")
     print(f"Classifier : {row.classification_id}")
     print(f"Parser     : {row.parser_id}")
     print(f"Created    : {row.created_at}")
-    if email:
-        print(f"Sender     : {email.sender}")
-        print(f"Subject    : {email.subject}")
-        print(f"Snippet    : {email.snippet}")
-        print()
-        print("Body:")
-        print(email.body_text[:2000])
+    print(f"Sender     : {fe.sender}")
+    print(f"Subject    : {fe.subject}")
+    print(f"Snippet    : {fe.snippet}")
+    print()
+    print("Body:")
+    print((fe.body_text or "")[:2000])

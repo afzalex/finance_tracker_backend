@@ -234,7 +234,7 @@ class TransactionParser:
             account_id = account_last4 or card_last4
 
         fields: Dict[str, Any] = {
-            "gmail_message_id": None,  # filled in by pipeline
+            "mail_id": None,  # filled in by pipeline
             "transacted_at": transacted_at,
             "origin": "EMAIL_ALERT",
             "amount": amount_raw,

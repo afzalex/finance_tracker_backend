@@ -1,6 +1,6 @@
 """ORM model: UnparsedMessage — messages that failed classification or parsing.
 
-Email content is not duplicated here; join to fetched_emails on gmail_message_id for the full payload.
+Email content is not duplicated here; join to ``fetched_emails`` on ``fetched_email_id``.
 """
 
 from datetime import datetime
@@ -16,20 +16,22 @@ class UnparsedMessage(Base):
     """Tracks emails that could not be fully classified or parsed.
 
     Stores only the foreign key and failure metadata; the raw email content
-    lives in ``fetched_emails`` (joined on ``gmail_message_id``).  Rows are
-    removed when a subsequent ingest run successfully parses the message.
+    lives in ``fetched_emails``. Rows are removed when a subsequent ingest run
+    successfully parses the message.
     """
 
     __tablename__ = "unparsed_messages"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    gmail_message_id: Mapped[str] = mapped_column(
-        String, ForeignKey("fetched_emails.gmail_message_id", ondelete="CASCADE"),
-        nullable=False, unique=True, index=True,
+    fetched_email_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("fetched_emails.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
     )
     reason: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
-    # Traceability: which classifier / parser tried this message
     classification_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("classifications.id", ondelete="SET NULL"), nullable=True
     )

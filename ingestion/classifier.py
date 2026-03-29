@@ -26,21 +26,27 @@ from backend.ingestion.utils import match_regex, merge_extract_groups
 
 logger = logging.getLogger(__name__)
 
+# Stored in ``fetched_email_enrichments.classification_reason`` when no rule matches.
+CLASSIFICATION_NO_MATCH_REASON = "no_classification_rule_matched"
+
 
 @dataclass
 class ClassificationResult:
     """Outcome of classifying a single email.
 
     Attributes:
-        message_type:       One of the ``MessageType`` enum values as a string.
-        classification_id:  PK of the matching ``Classification`` row, or ``None``
-                            when the fallback OTHER rule applies.
-        extracted:          Named groups pulled by the rule's extract regexes
-                            (may be empty when no extract regex is configured).
+        message_type:            One of the ``MessageType`` enum values as a string.
+        classification_id:       PK of the matching ``Classification`` row, or ``None``
+                                 when the fallback OTHER rule applies.
+        classification_reason:   Matching rule name, or ``CLASSIFICATION_NO_MATCH_REASON`` when
+                                 no rule matched; stored in enrichment.
+        extracted:               Named groups pulled by the rule's extract regexes
+                                 (may be empty when no extract regex is configured).
     """
 
     message_type: str
     classification_id: Optional[int]
+    classification_reason: Optional[str] = None
     extracted: dict = field(default_factory=dict)
 
 
@@ -80,8 +86,8 @@ class MessageClassifier:
                     (rule.body_match_regex, body),
                 )
             )
-            # Skip if any pattern explicitly failed, or if none were specified
-            if any(r is False for r in results) or all(r is None for r in results):
+            # Skip if any pattern explicitly failed
+            if any(r is False for r in results):
                 continue
 
             message_type = rule.message_type.value
@@ -105,9 +111,14 @@ class MessageClassifier:
             return ClassificationResult(
                 message_type=message_type,
                 classification_id=rule.id,
+                classification_reason=rule.name,
                 extracted=extracted,
             )
 
         # No rule matched — DB should have a catch-all OTHER row
         logger.debug("No classification rule matched; defaulting to OTHER")
-        return ClassificationResult(message_type="OTHER", classification_id=None)
+        return ClassificationResult(
+            message_type="OTHER",
+            classification_id=None,
+            classification_reason=CLASSIFICATION_NO_MATCH_REASON,
+        )

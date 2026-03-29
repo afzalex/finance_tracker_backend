@@ -1,23 +1,28 @@
-"""ORM model: FetchedEmail — raw email cache."""
+"""ORM model: FetchedEmail — raw email cache (insert-only from the pipeline)."""
 
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, DateTime, Integer, String, Text, func
+from sqlalchemy import BigInteger, DateTime, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
 
 
 class FetchedEmail(Base):
-    """Raw email fetched from Gmail.
+    """Raw email from a provider (Gmail today; others later).
 
-    Cached for offline re-processing (--offline flag) without hitting the API again.
+    ``id`` is the internal primary key. ``mail_id`` is the provider's stable
+    message identifier (e.g. Gmail API message id). Rows are inserted once per
+    ``mail_id``; updates are not applied. Classification/parser state lives in
+    ``FetchedEmailEnrichment``.
     """
 
     __tablename__ = "fetched_emails"
+    __table_args__ = (UniqueConstraint("mail_id", name="uq_fetched_emails_mail_id"),)
 
-    gmail_message_id: Mapped[str] = mapped_column(String, primary_key=True)  # natural PK
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    mail_id: Mapped[str] = mapped_column(String, nullable=False)
     thread_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     subject: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     sender: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -25,15 +30,4 @@ class FetchedEmail(Base):
     internal_date_ms: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     body_text: Mapped[str] = mapped_column(Text, nullable=False)
 
-    # Classification result stored alongside the raw email for debugging
-    classification: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    classification_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-
-    # Enrichment ids written by the streaming pipeline (may be NULL when unknown)
-    classification_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
-    parser_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
-
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
-    )

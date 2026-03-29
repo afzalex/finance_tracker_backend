@@ -84,7 +84,7 @@ def _make_message(
 def test_extract_email_content_fields() -> None:
     msg = _make_message()
     content = extract_email_content(msg)
-    assert content.gmail_message_id == "abc123"
+    assert content.mail_id == "abc123"
     assert content.subject == "HDFC Bank Account Alert"
     assert content.sender == "alerts@hdfcbank.com"
     assert content.snippet == "A/c XX1234 debited"

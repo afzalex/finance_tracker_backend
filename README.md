@@ -136,7 +136,7 @@ python -m backend.cli export --from 2026-01-01 --to 2026-01-31 --out transaction
 
 ```bash
 python -m backend.cli unparsed --list
-python -m backend.cli unparsed --show <gmail_message_id>
+python -m backend.cli unparsed --show <mail_id>
 ```
 
 ---

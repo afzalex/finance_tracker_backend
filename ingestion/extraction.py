@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import html
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from bs4 import BeautifulSoup
@@ -15,25 +15,27 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class EmailContent:
-    """Normalised representation of a single Gmail message.
+    """Normalised representation of a single mail message (Gmail API today).
 
     Attributes:
-        gmail_message_id: Unique Gmail message ID (used as primary key in DB).
-        thread_id:        Gmail thread ID the message belongs to.
+        mail_id:          Provider-stable message id (e.g. Gmail ``id``).
+        thread_id:        Provider thread / conversation id.
         subject:          Decoded ``Subject`` header.
         sender:           ``From`` header value (may include display name).
-        snippet:          Short Gmail-generated preview of the body.
+        snippet:          Short provider preview of the body.
         internal_date_ms: Message receipt timestamp in milliseconds since epoch.
         body_text:        Plain-text body (HTML converted to text when no plain part exists).
+        fetched_email_id: Internal ``fetched_emails.id`` after persist; set by the pipeline.
     """
 
-    gmail_message_id: str
+    mail_id: str
     thread_id: str
     subject: str
     sender: str
     snippet: str
     internal_date_ms: int
     body_text: str
+    fetched_email_id: Optional[int] = field(default=None, repr=False)
 
 
 def extract_email_content(message: Dict[str, Any]) -> EmailContent:
@@ -66,7 +68,7 @@ def extract_email_content(message: Dict[str, Any]) -> EmailContent:
         msg_id, sender, subject, len(body_text),
     )
     return EmailContent(
-        gmail_message_id=msg_id,
+        mail_id=msg_id,
         thread_id=thread_id,
         subject=subject,
         sender=sender,

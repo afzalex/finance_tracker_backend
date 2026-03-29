@@ -38,7 +38,7 @@ class Transaction(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
     # ── Source ────────────────────────────────────────────────────────────────
-    gmail_message_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    mail_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     transacted_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
     origin: Mapped[Origin] = mapped_column(Enum(Origin), nullable=False)
 

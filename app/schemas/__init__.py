@@ -42,7 +42,7 @@ class TransactionRead(TransactionBase):
 
     model_config = ConfigDict(from_attributes=True)
     id: int
-    gmail_message_id: str
+    mail_id: str
     created_at: datetime
 
 

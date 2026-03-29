@@ -3,7 +3,11 @@
 import pytest
 from sqlalchemy.orm import Session
 
-from backend.ingestion.classifier import ClassificationResult, MessageClassifier
+from backend.ingestion.classifier import (
+    CLASSIFICATION_NO_MATCH_REASON,
+    ClassificationResult,
+    MessageClassifier,
+)
 from tests.conftest import seed_classification
 
 
@@ -19,6 +23,7 @@ def test_no_rules_returns_other(db: Session) -> None:
     result = _classify(db, sender="x@y.com", subject="Hello")
     assert result.message_type == "OTHER"
     assert result.classification_id is None
+    assert result.classification_reason == CLASSIFICATION_NO_MATCH_REASON
 
 
 # ── Sender match ──────────────────────────────────────────────────────────────
@@ -28,12 +33,14 @@ def test_matches_by_sender(db: Session) -> None:
     result = _classify(db, sender="alerts@hdfcbank.com", subject="Alert")
     assert result.message_type == "TRANSACTION_ALERT"
     assert result.classification_id is not None
+    assert result.classification_reason == "Test rule"
 
 
 def test_sender_mismatch_returns_other(db: Session) -> None:
     seed_classification(db, message_type="TRANSACTION_ALERT", sender_match_regex=r"alerts@hdfcbank")
     result = _classify(db, sender="noreply@icicibank.com", subject="Alert")
     assert result.message_type == "OTHER"
+    assert result.classification_reason == CLASSIFICATION_NO_MATCH_REASON
 
 
 # ── Subject match ─────────────────────────────────────────────────────────────
@@ -81,6 +88,7 @@ def test_higher_priority_rule_wins(db: Session) -> None:
     seed_classification(db, name="high", message_type="TRANSACTION_ALERT", priority=99, sender_match_regex=r"hdfc")
     result = _classify(db, sender="alerts@hdfcbank.com", subject="Alert")
     assert result.message_type == "TRANSACTION_ALERT"
+    assert result.classification_reason == "high"
 
 
 # ── All match conditions must pass ────────────────────────────────────────────
@@ -95,6 +103,7 @@ def test_all_specified_patterns_must_match(db: Session) -> None:
     # Sender matches but subject does not → OTHER
     result = _classify(db, sender="alerts@hdfcbank.com", subject="Promotional offer")
     assert result.message_type == "OTHER"
+    assert result.classification_reason == CLASSIFICATION_NO_MATCH_REASON
 
     # Both match → TRANSACTION_ALERT
     result = _classify(db, sender="alerts@hdfcbank.com", subject="Account debited")
@@ -141,3 +150,4 @@ def test_inactive_rule_is_ignored(db: Session) -> None:
     db.flush()
     result = _classify(db, sender="alerts@hdfcbank.com")
     assert result.message_type == "OTHER"
+    assert result.classification_reason == CLASSIFICATION_NO_MATCH_REASON

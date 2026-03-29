@@ -65,8 +65,9 @@ Pipeline stages
 2. **Extract** — ``extract_email_content()`` decodes each raw message into
    an ``EmailContent`` dataclass.
 
-3. **Store** — the raw email is upserted into ``fetched_emails`` so it can
-   be replayed offline (``--offline``) or re-inspected later.
+3. **Store** — the raw payload is inserted once into ``fetched_emails`` (no
+   updates on re-fetch).  Classification and parser fields live in
+   ``fetched_email_enrichments`` and are updated each run.
 
 4. **Classify** — ``MessageClassifier.classify()`` determines the email's
    ``MessageType``.  ``SINK`` emails are discarded immediately.  Non-alert
