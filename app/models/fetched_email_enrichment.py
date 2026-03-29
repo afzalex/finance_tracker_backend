@@ -1,8 +1,9 @@
 """ORM model: classification/parser state for a fetched email (1:1 with fetched_emails)."""
 
+from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
@@ -22,3 +23,10 @@ class FetchedEmailEnrichment(Base):
     classification: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     classification_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     parser_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+    )
