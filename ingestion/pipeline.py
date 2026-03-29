@@ -39,6 +39,47 @@ logger = logging.getLogger(__name__)
 _PARSEABLE_TYPES = {"TRANSACTION_ALERT"}
 
 
+def _gmail_label_term(name: str) -> str:
+    """Build one ``label:…`` search atom for Gmail ``messages.list`` query ``q``."""
+    n = name.strip()
+    if not n:
+        return ""
+    if any(c in n for c in ' "\t'):
+        escaped = n.replace("\\", "\\\\").replace('"', '\\"')
+        return f'label:"{escaped}"'
+    return f"label:{n}"
+
+
+def _gmail_label_query(labels: list[str]) -> str:
+    """Gmail search fragment: one ``label:`` term or ``(a OR b OR …)`` for several labels."""
+    terms = [_gmail_label_term(x) for x in labels]
+    terms = [t for t in terms if t]
+    if not terms:
+        return _gmail_label_term("Finance")
+    if len(terms) == 1:
+        return terms[0]
+    return "(" + " OR ".join(terms) + ")"
+
+
+def _iter_history_for_labels(
+    client: GmailClient, history_id: str, label_names: list[str]
+) -> Iterator[dict]:
+    """Merge ``history.list`` across labels (API allows one ``labelId`` per call); dedupe by message id."""
+    seen: set[str] = set()
+    for name in label_names:
+        lid = client.get_label_id(name)
+        if lid is None:
+            logger.warning("Gmail label %r not found; skipping for history sync", name)
+            continue
+        for stub in client.iter_history_message_stubs(
+            start_history_id=history_id, label_id=lid
+        ):
+            mid = stub.get("id")
+            if mid and mid not in seen:
+                seen.add(mid)
+                yield stub
+
+
 # ── Public entry points ────────────────────────────────────────────────────────
 
 def run_ingest(args: argparse.Namespace) -> None:
@@ -73,7 +114,7 @@ def run_poll() -> None:
     print(f"Poll daemon started — interval: {settings.poll_seconds}s")
     while not _stop:
         try:
-            _args = argparse.Namespace(once=None, force=False, mail=True,
+            _args = argparse.Namespace(once=None, force=None, mail=True,
                                        unparsed=False, offline=False)
             run_ingest(_args)
         except GmailAuthError as exc:
@@ -105,8 +146,8 @@ def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> None:
     """Fetch emails from Gmail and run the processing pipeline.
 
     Supports three sub-modes:
-    - ``--once N``  Fetch the N most recent labelled messages; ingest cursor not updated.
-    - ``--force``   Ignore the stored cursor and re-fetch the full lookback window.
+    - ``--once N``  Fetch the N most recent messages matching configured label(s); ingest cursor not updated.
+    - ``--force``   Ignore the stored cursor and re-fetch the lookback window (optional ``N`` caps messages).
     - (default)     Incremental fetch via Gmail history API from the stored cursor,
                     falling back to a full fetch if the history ID has expired.
 
@@ -120,7 +161,7 @@ def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> None:
         sys.exit(1)
 
     once_n: Optional[int] = getattr(args, "once", None)
-    force: bool = getattr(args, "force", False)
+    force_arg: Optional[int] = getattr(args, "force", None)
 
     classifier = MessageClassifier(db)
     classifier.load_rules()
@@ -129,19 +170,19 @@ def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> None:
     stats = dict(fetched=0, parsed=0, unparsed=0, skipped=0, duplicate=0)
 
     if once_n is not None:
-        query = f"label:{settings.gmail_label}"
+        query = _gmail_label_query(settings.gmail_labels)
         stubs_iter = client.iter_message_stubs(query=query, max_results=once_n)
-    elif force:
-        stubs_iter = _fetch_full(client)
+    elif force_arg is not None:
+        max_in_window = None if force_arg < 0 else force_arg
+        stubs_iter = _fetch_full(client, max_results=max_in_window)
     else:
         cursor = db.query(IngestCursor).first()
         history_id = cursor.gmail_history_id if cursor else None
 
         if history_id:
             try:
-                label_id = client.get_label_id(settings.gmail_label)
-                stubs_iter = client.iter_history_message_stubs(
-                    start_history_id=history_id, label_id=label_id
+                stubs_iter = _iter_history_for_labels(
+                    client, history_id, settings.gmail_labels
                 )
             except HistoryExpiredError:
                 logger.warning("History ID expired — falling back to full fetch")
@@ -167,11 +208,14 @@ def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> None:
     _print_stats(stats)
 
 
-def _fetch_full(client: GmailClient) -> Iterator[dict]:
-    """Build a lookback query and stream all message stubs."""
+def _fetch_full(
+    client: GmailClient, *, max_results: Optional[int] = None
+) -> Iterator[dict]:
+    """Build a lookback query and stream message stubs (newest first within the API order)."""
     cutoff = datetime.now(tz=timezone.utc) - timedelta(days=settings.initial_lookback_days)
-    query = f"label:{settings.gmail_label} after:{cutoff.year}/{cutoff.month}/{cutoff.day}"
-    return client.iter_message_stubs(query=query, max_results=None)
+    label_q = _gmail_label_query(settings.gmail_labels)
+    query = f"{label_q} after:{cutoff.year}/{cutoff.month}/{cutoff.day}"
+    return client.iter_message_stubs(query=query, max_results=max_results)
 
 
 # ── Offline / re-process modes ────────────────────────────────────────────────
@@ -391,24 +435,31 @@ def _insert_fetched_email_raw(db: Session, email: EmailContent) -> None:
     email.fetched_email_id = row.id
 
 
-def _reset_fetched_email_enrichment(db: Session, fetched_email_id: int) -> None:
-    """Clear enrichment for this run (insert row if missing)."""
+def _get_or_create_fetched_email_enrichment(
+    db: Session, fetched_email_id: int
+) -> FetchedEmailEnrichment:
+    """Return the 1:1 enrichment row, creating a placeholder if missing."""
     row = db.get(FetchedEmailEnrichment, fetched_email_id)
     if row is None:
-        db.add(
-            FetchedEmailEnrichment(
-                fetched_email_id=fetched_email_id,
-                classification_id=None,
-                classification=None,
-                classification_reason=None,
-                parser_id=None,
-            )
+        row = FetchedEmailEnrichment(
+            fetched_email_id=fetched_email_id,
+            classification_id=None,
+            classification=None,
+            classification_reason=None,
+            parser_id=None,
         )
-    else:
-        row.classification_id = None
-        row.classification = None
-        row.classification_reason = None
-        row.parser_id = None
+        db.add(row)
+    return row
+
+
+def _reset_fetched_email_enrichment(db: Session, fetched_email_id: int) -> None:
+    """Clear enrichment for this run (insert row if missing)."""
+    row = _get_or_create_fetched_email_enrichment(db, fetched_email_id)
+    row.classification_id = None
+    row.classification = None
+    row.classification_reason = None
+    row.parser_id = None
+    db.flush()
 
 
 def _set_email_classification(
@@ -420,18 +471,16 @@ def _set_email_classification(
     classification_reason: Optional[str] = None,
 ) -> None:
     """Write the classifier result to ``fetched_email_enrichments``."""
-    row = db.get(FetchedEmailEnrichment, fetched_email_id)
-    if row:
-        row.classification = message_type
-        row.classification_id = classification_id
-        row.classification_reason = classification_reason
+    row = _get_or_create_fetched_email_enrichment(db, fetched_email_id)
+    row.classification = message_type
+    row.classification_id = classification_id
+    row.classification_reason = classification_reason
 
 
 def _set_email_parser_id(db: Session, fetched_email_id: int, parser_id: Optional[int]) -> None:
     """Write the chosen parser id (even when parsing later fails)."""
-    row = db.get(FetchedEmailEnrichment, fetched_email_id)
-    if row:
-        row.parser_id = parser_id
+    row = _get_or_create_fetched_email_enrichment(db, fetched_email_id)
+    row.parser_id = parser_id
 
 
 def _upsert_unparsed(
@@ -538,10 +587,11 @@ def _upsert_transaction(db: Session, fields: dict) -> str:
         classification_id=fields.get("classification_id"),
     )
     try:
-        db.add(txn)
-        db.flush()
+        with db.begin_nested():
+            db.add(txn)
+            db.flush()
     except IntegrityError:
-        db.rollback()
+        # Savepoint rollback only — keeps fetched_email / enrichment / unparsed in the outer txn.
         return "duplicate"
     return "inserted"
 

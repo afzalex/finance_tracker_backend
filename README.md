@@ -54,12 +54,12 @@ Key variables:
 | `DATABASE_URL` | `sqlite:///./data/finance.db` | SQLite DB path |
 | `GMAIL_CREDENTIALS_FILE` | `secrets/credentials.json` | OAuth2 client secret JSON from Google Cloud Console |
 | `GMAIL_TOKEN_FILE` | `secrets/token.json` | Token file written after first login |
-| `GMAIL_LABEL` | `Finance` | Gmail label to restrict ingestion to |
+| `GMAIL_LABEL` | `Finance` | Comma-separated Gmail label names (e.g. `Finance,Receipts`). Message search uses OR across labels; incremental history merges each label’s changes and dedupes by message id. Do not use commas inside a label name. |
 | `POLL_SECONDS` | `300` | Interval between Gmail polls in daemon mode |
 | `INITIAL_LOOKBACK_DAYS` | `30` | Look-back window on first ingest run |
 | `CONFIDENCE_THRESHOLD` | `50` | Minimum parse confidence (0–100) to accept a transaction |
 | `ENV` | `development` | Runtime environment label (`development` or `production`) |
-| `LOG_LEVEL` | `INFO` | Log verbosity: DEBUG, INFO, WARNING, ERROR |
+| `LOG_LEVEL` | `INFO` | Log verbosity: `TRACE` (includes SQL echo), `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 
 ### 5. Authenticate with Gmail
 
@@ -104,8 +104,11 @@ python -m backend.cli ingest
 # Fetch only the 10 most recent messages (cursor not updated)
 python -m backend.cli ingest --once 10
 
-# Force-fetch the last 30 days, ignoring stored cursor
+# Force-fetch the lookback window, ignoring stored cursor (cursor is updated)
 python -m backend.cli ingest --force
+
+# Same, but only the 50 newest messages in that window
+python -m backend.cli ingest --force 50
 
 # Re-process from locally cached emails (no Gmail API call)
 python -m backend.cli ingest --offline

@@ -16,12 +16,13 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from backend.config import settings
+from backend.log_levels import sqlalchemy_echo_from_log_level
 
 engine = create_engine(
     settings.database_url,
     # SQLite-specific: enable WAL mode for better concurrency
     connect_args={"check_same_thread": False},
-    echo=settings.log_level.upper() == "DEBUG",
+    echo=sqlalchemy_echo_from_log_level(settings.log_level),
 )
 
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)

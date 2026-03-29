@@ -13,7 +13,8 @@ Run modes for ingest, export, stats, unparsed
 ---------------------------------------------
 (none)      One run from stored cursor (default).
 --once N    Fetch only N most recent messages; cursor NOT updated.
---force     Force-fetch last 30 days, ignoring stored cursor.
+--force     Force-fetch lookback window, ignoring stored cursor (cursor updated).
+--force N   Same, but only the N newest messages in that window.
 
 Source flags (mutually exclusive; not applicable to --poll)
 -----------------------------------------------------------
@@ -74,8 +75,18 @@ def _add_run_mode_flags(p: argparse.ArgumentParser) -> None:
                       help="Fetch N most recent messages (default 1); cursor not updated.")
     mode.add_argument("--poll", action="store_true",
                       help="Run continuously. Source flags do not apply.")
-    mode.add_argument("--force", action="store_true",
-                      help="Force-fetch last 30 days ignoring stored cursor.")
+    mode.add_argument(
+        "--force",
+        nargs="?",
+        const=-1,
+        default=None,
+        type=int,
+        metavar="N",
+        help=(
+            "Ignore cursor; re-fetch the configured lookback window. "
+            "With N, stop after N newest messages in that window (default: all)."
+        ),
+    )
 
 
 def _add_source_flags(p: argparse.ArgumentParser) -> None:
@@ -92,8 +103,10 @@ def _add_source_flags(p: argparse.ArgumentParser) -> None:
 def main() -> None:
     """Parse CLI arguments and dispatch to the appropriate sub-command handler."""
     from backend.config import settings  # noqa: PLC0415
+    from backend.log_levels import parse_log_level  # noqa: PLC0415
+
     logging.basicConfig(
-        level=settings.log_level.upper(),
+        level=parse_log_level(settings.log_level),
         format="%(asctime)s %(levelname)s %(name)s — %(message)s",
     )
 
