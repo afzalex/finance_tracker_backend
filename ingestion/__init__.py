@@ -52,8 +52,8 @@ pipeline.py
     consumed by ``cli.py``:
 
     - ``run_ingest(args)``   — one-shot ingest (normal, ``--once``,
-                               ``--force``, ``--offline``).
-    - ``run_poll()``         — continuous daemon loop (SIGTERM-safe).
+                               ``--force``, ``--offline``, or ``--poll``).
+    - ``run_poll(args)``     — continuous daemon loop (SIGTERM/SIGINT-safe).
     - ``run_unparsed(args)`` — inspect / retry failed messages.
 
 Pipeline stages

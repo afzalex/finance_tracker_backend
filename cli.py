@@ -16,8 +16,8 @@ Run modes for ingest, export, stats, unparsed
 --force     Force-fetch lookback window, ignoring stored cursor (cursor updated).
 --force N   Same, but only the N newest messages in that window.
 
-Source flags (mutually exclusive; not applicable to --poll)
------------------------------------------------------------
+Source flags (mutually exclusive; apply to each poll tick when using ``--poll`` or ``poll``)
+--------------------------------------------------------------------------------------------
 --mail      (default) Fetch from Gmail.
 --unparsed  Re-process unparsed queue.
 --offline   Re-process from stored fetched_emails.
@@ -48,7 +48,11 @@ def build_parser() -> argparse.ArgumentParser:
     _add_source_flags(ingest_p)
 
     # ── poll ──────────────────────────────────────────────────────────────────
-    sub.add_parser("poll", help="Run ingest continuously (daemon mode).")
+    poll_p = sub.add_parser(
+        "poll",
+        help="Run ingest every POLL_SECONDS until SIGINT/SIGTERM (same source flags as ingest).",
+    )
+    _add_source_flags(poll_p)
 
     # ── export ────────────────────────────────────────────────────────────────
     export_p = sub.add_parser("export", help="Export transactions to a CSV file.")
@@ -73,8 +77,11 @@ def _add_run_mode_flags(p: argparse.ArgumentParser) -> None:
     mode = p.add_mutually_exclusive_group()
     mode.add_argument("--once", type=int, nargs="?", const=1, metavar="N",
                       help="Fetch N most recent messages (default 1); cursor not updated.")
-    mode.add_argument("--poll", action="store_true",
-                      help="Run continuously. Source flags do not apply.")
+    mode.add_argument(
+        "--poll",
+        action="store_true",
+        help="After this run, keep ingesting every POLL_SECONDS (SIGINT/SIGTERM to stop).",
+    )
     mode.add_argument(
         "--force",
         nargs="?",
@@ -125,7 +132,7 @@ def main() -> None:
         run_ingest(args)
     elif args.command == "poll":
         from backend.ingestion.pipeline import run_poll  # noqa: PLC0415
-        run_poll()
+        run_poll(args)
     elif args.command == "export":
         from backend.app.services.export_service import run_export  # noqa: PLC0415
         run_export(args)

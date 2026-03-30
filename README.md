@@ -112,15 +112,20 @@ python -m backend.cli ingest --force 50
 
 # Re-process from locally cached emails (no Gmail API call)
 python -m backend.cli ingest --offline
+
+# Poll Gmail forever (same as ``poll`` command; add --offline / --unparsed if needed)
+python -m backend.cli ingest --poll
 ```
 
 ### `poll` — continuous daemon mode
 
 ```bash
 python -m backend.cli poll
+python -m backend.cli poll --offline
+python -m backend.cli poll --unparsed
 ```
 
-Runs `ingest` on a loop, sleeping `POLL_SECONDS` between runs. Send `SIGTERM` to stop.
+Runs `ingest` on a loop, sleeping `POLL_SECONDS` between runs (same source flags as `ingest`: default Gmail, or `--offline` / `--unparsed`). You can also start polling with `python -m backend.cli ingest --poll` (optionally combined with those source flags). Stop with `SIGINT` or `SIGTERM`.
 
 ### `stats` — monthly summary
 

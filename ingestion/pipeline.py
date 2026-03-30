@@ -3,7 +3,7 @@
 Entry points
 ------------
 run_ingest(args)   One-shot or --once / --force run.
-run_poll()         Continuous polling daemon.
+run_poll(args)     Continuous polling daemon (``poll`` command or ``ingest --poll``).
 run_unparsed(args) List / inspect messages from the unparsed queue.
 """
 
@@ -82,14 +82,31 @@ def _iter_history_for_labels(
 
 # ── Public entry points ────────────────────────────────────────────────────────
 
+def _ingest_args_for_poll_tick(base: argparse.Namespace) -> argparse.Namespace:
+    """Build args for a single ingest inside the poll loop (no ``--poll`` / ``--once`` / ``--force``)."""
+    return argparse.Namespace(
+        once=None,
+        force=None,
+        poll=False,
+        mail=bool(getattr(base, "mail", True)),
+        unparsed=bool(getattr(base, "unparsed", False)),
+        offline=bool(getattr(base, "offline", False)),
+    )
+
+
 def run_ingest(args: argparse.Namespace) -> None:
     """Main ingest pipeline entry point.
 
     Dispatches to one of three fetch modes based on CLI flags:
+    - ``--poll``     → start ``run_poll`` with the same source flags (Gmail / unparsed / offline).
     - ``--offline``  → re-process emails already stored in ``fetched_emails``.
     - ``--unparsed`` → re-process the current ``unparsed_messages`` queue.
     - (default)      → fetch from Gmail (incremental, ``--once``, or ``--force``).
     """
+    if getattr(args, "poll", False):
+        run_poll(args)
+        return
+
     with SessionLocal() as db:
         if getattr(args, "offline", False):
             _ingest_offline(db) # ingest from fetched_emails table
@@ -99,8 +116,13 @@ def run_ingest(args: argparse.Namespace) -> None:
             _ingest_from_gmail(db, args) # ingest from gmail
 
 
-def run_poll() -> None:
-    """Continuous polling daemon with graceful SIGTERM shutdown."""
+def run_poll(base_args: Optional[argparse.Namespace] = None) -> None:
+    """Continuous polling daemon with graceful SIGTERM / SIGINT shutdown.
+
+    Each tick runs one ``run_ingest`` using ``base_args`` source flags (``--mail`` /
+    ``--unparsed`` / ``--offline``). ``--once`` / ``--force`` apply only to the
+    standalone ``ingest`` command, not between poll intervals.
+    """
     _stop = False
 
     def _handler(sig, frame):  # noqa: ANN001
@@ -111,12 +133,20 @@ def run_poll() -> None:
     signal.signal(signal.SIGTERM, _handler)
     signal.signal(signal.SIGINT, _handler)
 
-    print(f"Poll daemon started — interval: {settings.poll_seconds}s")
+    base = base_args if base_args is not None else argparse.Namespace(
+        mail=True,
+        unparsed=False,
+        offline=False,
+    )
+    tick = _ingest_args_for_poll_tick(base)
+
+    print(
+        f"Poll daemon started — interval: {settings.poll_seconds}s  "
+        f"(mail={tick.mail} unparsed={tick.unparsed} offline={tick.offline})"
+    )
     while not _stop:
         try:
-            _args = argparse.Namespace(once=None, force=None, mail=True,
-                                       unparsed=False, offline=False)
-            run_ingest(_args)
+            run_ingest(tick)
         except GmailAuthError as exc:
             print(f"Auth error: {exc}", file=sys.stderr)
             sys.exit(1)
