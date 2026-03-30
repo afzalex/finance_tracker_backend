@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from backend.database import Base
 
@@ -22,9 +23,11 @@ from backend.app.models.unparsed_message import UnparsedMessage  # noqa: F401
 @pytest.fixture()
 def db() -> Session:
     """Yield an in-memory SQLite session with all tables created."""
+    # StaticPool: one shared in-memory DB for all connections (TestClient uses another thread).
     engine = create_engine(
-        "sqlite:///:memory:",
+        "sqlite://",
         connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
     )
     Base.metadata.create_all(engine)
     SessionLocal = sessionmaker(bind=engine)

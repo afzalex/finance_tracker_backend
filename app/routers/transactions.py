@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -19,13 +20,13 @@ async def list_transactions(
     db: Session = Depends(get_db),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=500),
-    account_id: str | None = Query(None),
-    provider: str | None = Query(None),
-    category: str | None = Query(None),
-    direction: Direction | None = Query(None),
-    date_from: date | None = Query(None, description="ISO date YYYY-MM-DD"),
-    date_to: date | None = Query(None, description="ISO date YYYY-MM-DD"),
-    search: str | None = Query(None, description="Search by merchant or payee"),
+    account_id: Optional[str] = Query(None),
+    provider: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    direction: Optional[Direction] = Query(None),
+    date_from: Optional[date] = Query(None, description="ISO date YYYY-MM-DD"),
+    date_to: Optional[date] = Query(None, description="ISO date YYYY-MM-DD"),
+    search: Optional[str] = Query(None, description="Search by merchant or payee"),
     sort_by: str = Query("transacted_at", pattern="^(transacted_at|amount|merchant)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
 ) -> TransactionListResponse:

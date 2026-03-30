@@ -1,5 +1,9 @@
 """Analytics router — charts and breakdowns for the dashboard."""
 
+from __future__ import annotations
+
+from typing import Optional
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
@@ -24,9 +28,9 @@ async def cashflow(
 @router.get("/category-breakdown", response_model=list[CategoryBreakdown])
 async def category_breakdown(
     db: Session = Depends(get_db),
-    month: str | None = Query(None, description="Filter to a specific month (YYYY-MM)"),
-    date_from: str | None = Query(None),
-    date_to: str | None = Query(None),
+    month: Optional[str] = Query(None, description="Filter to a specific month (YYYY-MM)"),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
 ) -> list[CategoryBreakdown]:
     """Spending by category.
 
@@ -38,7 +42,7 @@ async def category_breakdown(
 @router.get("/top-merchants", response_model=list[MerchantSummary])
 async def top_merchants(
     db: Session = Depends(get_db),
-    month: str | None = Query(None),
+    month: Optional[str] = Query(None),
     limit: int = Query(10, ge=1, le=100),
 ) -> list[MerchantSummary]:
     """Top merchants by total spend.

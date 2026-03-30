@@ -179,6 +179,8 @@ FastAPI exposes an OpenAPI spec (Swagger). You can generate a TypeScript client 
 
 ### Export OpenAPI spec (no server needed)
 
+The spec file `openapi.json` is generated locally (gitignored). `make gen-client` exports it automatically before running the generator.
+
 From `backend/` (with your venv activated — `source .venv/bin/activate`):
 
 ```bash
@@ -218,6 +220,7 @@ npm i axios
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/v1/transactions` | Paginated, filterable transaction list |
+| `GET` | `/api/v1/emails/{mail_id}` | Cached raw email + enrichment by provider message id (`fetched_emails.mail_id`) |
 | `GET` | `/api/v1/accounts` | All known accounts / cards / wallets |
 | `GET` | `/api/v1/stats` | Monthly debit / credit / net totals |
 | `GET` | `/api/v1/analytics/cashflow` | Monthly income vs expense over N months |

@@ -28,6 +28,9 @@ data/
 # Alembic
 migrations/versions/*.pyc
 
+# Generated OpenAPI spec (run: make openapi, or scripts/generate_ts_client.sh)
+openapi.json
+
 # Testing
 .pytest_cache/
 .coverage
