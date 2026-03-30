@@ -18,13 +18,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Iterator, Optional
 
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.app.models.fetched_email import FetchedEmail
-from backend.app.models.fetched_email_enrichment import FetchedEmailEnrichment
 from backend.app.models.ingest_cursor import IngestCursor
-from backend.app.models.transaction import Transaction
 from backend.app.models.unparsed_message import UnparsedMessage
 from backend.config import settings
 from backend.database import SessionLocal
@@ -32,11 +29,16 @@ from backend.ingestion.classifier import MessageClassifier
 from backend.ingestion.extraction import EmailContent, extract_email_content
 from backend.ingestion.gmail.auth import GmailAuthError
 from backend.ingestion.gmail.client import GmailClient, HistoryExpiredError
+from backend.ingestion.handlers import dispatch
+from backend.ingestion.handlers.context import HandlerContext
+from backend.ingestion.persistence import (
+    insert_fetched_email_raw,
+    reset_fetched_email_enrichment,
+    set_email_classification,
+)
 from backend.ingestion.parsers import TransactionParser
 
 logger = logging.getLogger(__name__)
-
-_PARSEABLE_TYPES = {"TRANSACTION_ALERT"}
 
 
 def _gmail_label_term(name: str) -> str:
@@ -309,14 +311,6 @@ def _ingest_from_unparsed(db: Session) -> None:
 
 # ── Core processing loop ───────────────────────────────────────────────────────
 
-class _ParserAttemptError(Exception):
-    """Raised when a transaction parse attempt fails."""
-
-    def __init__(self, *, failure_reason: str, parser_id: Optional[int]) -> None:
-        super().__init__(failure_reason)
-        self.failure_reason = failure_reason
-        self.parser_id = parser_id
-
 
 def _process_one_email(
     *,
@@ -333,15 +327,15 @@ def _process_one_email(
     """
     stats["fetched"] += 1
 
-    _insert_fetched_email_raw(db, email)
+    insert_fetched_email_raw(db, email)
     assert email.fetched_email_id is not None
-    _reset_fetched_email_enrichment(db, email.fetched_email_id)
+    reset_fetched_email_enrichment(db, email.fetched_email_id)
 
     result = classifier.classify(
         email.sender, email.subject, email.body_text, email.snippet
     )
 
-    _set_email_classification(
+    set_email_classification(
         db,
         email.fetched_email_id,
         result.message_type,
@@ -349,77 +343,24 @@ def _process_one_email(
         classification_reason=result.classification_reason,
     )
 
-    if result.message_type == "SINK":
-        stats["skipped"] += 1
-        # Enrichment already holds classification_id / classification / classification_reason.
-        _remove_unparsed(db, email.fetched_email_id)
-        return
-
-    if result.message_type not in _PARSEABLE_TYPES:
-        _upsert_unparsed(
-            db,
-            email,
-            reason=f"classification:{result.message_type}",
-            classification_id=result.classification_id,
-            parser_id=None,
-        )
-        stats["unparsed"] += 1
-        return
-
-    parse_result = parser.parse(
-        email.sender,
-        email.subject,
-        email.body_text,
-        email.snippet,
-        email.internal_date_ms,
-        result.message_type,
-        result.classification_id,
+    ctx = HandlerContext(
+        db=db,
+        email=email,
+        result=result,
+        parser=parser,
+        stats=stats,
     )
-
-    _set_email_parser_id(db, email.fetched_email_id, parse_result.parser_id)
-
-    try:
-        if not parse_result.success:
-            raise _ParserAttemptError(
-                failure_reason=parse_result.failure_reason or "parse_failed",
-                parser_id=parse_result.parser_id,
-            )
-
-        fields = parse_result.fields
-        confidence = fields.get("confidence", 0)
-        if confidence < settings.confidence_threshold:
-            raise _ParserAttemptError(
-                failure_reason=f"low_confidence:{confidence}",
-                parser_id=parse_result.parser_id,
-            )
-
-        fields["mail_id"] = email.mail_id
-        saved = _upsert_transaction(db, fields)
-        if saved == "duplicate":
-            stats["duplicate"] += 1
-            _remove_unparsed(db, email.fetched_email_id)
-        else:
-            stats["parsed"] += 1
-            _remove_unparsed(db, email.fetched_email_id)
-    except _ParserAttemptError as exc:
-        _upsert_unparsed(
-            db,
-            email,
-            reason=exc.failure_reason,
-            classification_id=result.classification_id,
-            parser_id=exc.parser_id,
-        )
-        stats["unparsed"] += 1
+    dispatch(ctx)
 
 
 def _process_emails(
     emails: list[EmailContent],
     db: Session,
 ) -> dict:
-    """Classify, parse, and persist a list of emails.
+    """Classify and dispatch each message to a type-specific handler.
 
     For each message: upsert raw cache row if needed, refresh enrichment, then
-    classify / parse / persist transactions or unparsed rows.
+    classify and run the registered handler (transaction parse, sink, unparsed, …).
     """
     classifier = MessageClassifier(db)
     classifier.load_rules()
@@ -441,189 +382,7 @@ def _process_emails(
     return stats
 
 
-# ── DB helpers ────────────────────────────────────────────────────────────────
-
-def _insert_fetched_email_raw(db: Session, email: EmailContent) -> None:
-    """Insert raw payload once per ``mail_id``; never update existing rows."""
-    existing = db.execute(
-        select(FetchedEmail).where(FetchedEmail.mail_id == email.mail_id)
-    ).scalar_one_or_none()
-    if existing is not None:
-        email.fetched_email_id = existing.id
-        return
-    row = FetchedEmail(
-        mail_id=email.mail_id,
-        thread_id=email.thread_id,
-        subject=email.subject,
-        sender=email.sender,
-        snippet=email.snippet,
-        internal_date_ms=email.internal_date_ms,
-        body_text=email.body_text,
-    )
-    db.add(row)
-    db.flush()
-    email.fetched_email_id = row.id
-
-
-def _get_or_create_fetched_email_enrichment(
-    db: Session, fetched_email_id: int
-) -> FetchedEmailEnrichment:
-    """Return the 1:1 enrichment row, creating a placeholder if missing."""
-    row = db.get(FetchedEmailEnrichment, fetched_email_id)
-    if row is None:
-        row = FetchedEmailEnrichment(
-            fetched_email_id=fetched_email_id,
-            classification_id=None,
-            classification=None,
-            classification_reason=None,
-            parser_id=None,
-        )
-        db.add(row)
-    return row
-
-
-def _reset_fetched_email_enrichment(db: Session, fetched_email_id: int) -> None:
-    """Clear enrichment for this run (insert row if missing)."""
-    row = _get_or_create_fetched_email_enrichment(db, fetched_email_id)
-    row.classification_id = None
-    row.classification = None
-    row.classification_reason = None
-    row.parser_id = None
-    db.flush()
-
-
-def _set_email_classification(
-    db: Session,
-    fetched_email_id: int,
-    message_type: str,
-    *,
-    classification_id: Optional[int],
-    classification_reason: Optional[str] = None,
-) -> None:
-    """Write the classifier result to ``fetched_email_enrichments``."""
-    row = _get_or_create_fetched_email_enrichment(db, fetched_email_id)
-    row.classification = message_type
-    row.classification_id = classification_id
-    row.classification_reason = classification_reason
-
-
-def _set_email_parser_id(db: Session, fetched_email_id: int, parser_id: Optional[int]) -> None:
-    """Write the chosen parser id (even when parsing later fails)."""
-    row = _get_or_create_fetched_email_enrichment(db, fetched_email_id)
-    row.parser_id = parser_id
-
-
-def _upsert_unparsed(
-    db: Session,
-    email: EmailContent,
-    *,
-    reason: Optional[str] = None,
-    classification_id: Optional[int] = None,
-    parser_id: Optional[int] = None,
-) -> None:
-    """Record an email as unparsed, updating the existing row if one is already present.
-
-    Args:
-        reason:            Short string describing why parsing failed, e.g.
-                           ``"no_regex_match"``, ``"low_confidence:42"``,
-                           ``"classification:STATEMENT"``.
-        classification_id: FK to the ``classifications`` row that matched, if any.
-        parser_id:         FK to the ``parsers`` row that was attempted, if any.
-    """
-    if email.fetched_email_id is None:
-        logger.warning(
-            "Cannot persist unparsed row without fetched_email_id (mail_id=%r)",
-            email.mail_id,
-        )
-        return
-    fe_id = email.fetched_email_id
-    existing = (
-        db.query(UnparsedMessage)
-        .filter(UnparsedMessage.fetched_email_id == fe_id)
-        .first()
-    )
-    if existing:
-        existing.reason = reason
-        existing.classification_id = classification_id
-        existing.parser_id = parser_id
-    else:
-        db.add(UnparsedMessage(
-            fetched_email_id=fe_id,
-            reason=reason,
-            classification_id=classification_id,
-            parser_id=parser_id,
-        ))
-
-
-def _remove_unparsed(db: Session, fetched_email_id: Optional[int]) -> None:
-    """Delete any ``UnparsedMessage`` row for the given fetched email id.
-
-    Called after a previously-failed message is successfully re-parsed, so
-    the unparsed queue stays tidy.
-    """
-    if fetched_email_id is None:
-        return
-    db.query(UnparsedMessage).filter(
-        UnparsedMessage.fetched_email_id == fetched_email_id
-    ).delete(synchronize_session=False)
-
-
-def _upsert_transaction(db: Session, fields: dict) -> str:
-    """Insert a transaction; skip if (provider, txn_id) already exists.
-
-    Returns 'inserted' or 'duplicate'.
-    """
-    provider = fields.get("provider")
-    txn_id = fields.get("txn_id")
-
-    if provider and txn_id:
-        exists = db.query(Transaction).filter(
-            Transaction.provider == provider,
-            Transaction.txn_id == txn_id,
-        ).first()
-        if exists:
-            return "duplicate"
-
-    txn = Transaction(
-        mail_id=fields["mail_id"],
-        transacted_at=fields["transacted_at"],
-        origin=fields["origin"],
-        amount=fields.get("amount"),
-        amount_parsed=fields["amount_parsed"],
-        currency=fields.get("currency", "INR"),
-        direction=fields["direction"],
-        provider=provider,
-        account_type=fields.get("account_type"),
-        account_id=fields.get("account_id"),
-        account_last4=fields.get("account_last4"),
-        card_last4=fields.get("card_last4"),
-        card_network=fields.get("card_network"),
-        card_brand=fields.get("card_brand"),
-        transaction_type=fields.get("transaction_type"),
-        sub_type=fields.get("sub_type"),
-        status=fields.get("status"),
-        txn_id=txn_id,
-        fee_amount=fields.get("fee_amount"),
-        merchant=fields.get("merchant"),
-        counterparty_name=fields.get("counterparty_name"),
-        counterparty_vpa=fields.get("counterparty_vpa"),
-        counterparty_account=fields.get("counterparty_account"),
-        counterparty_number=fields.get("counterparty_number"),
-        counterparty_id=fields.get("counterparty_id"),
-        category=fields.get("category"),
-        balance=fields.get("balance"),
-        reward_points=fields.get("reward_points"),
-        parser_id=fields.get("parser_id"),
-        classification_id=fields.get("classification_id"),
-    )
-    try:
-        with db.begin_nested():
-            db.add(txn)
-            db.flush()
-    except IntegrityError:
-        # Savepoint rollback only — keeps fetched_email / enrichment / unparsed in the outer txn.
-        return "duplicate"
-    return "inserted"
+# ── Gmail cursor ───────────────────────────────────────────────────────────────
 
 
 def _save_cursor(db: Session, client: GmailClient) -> None:

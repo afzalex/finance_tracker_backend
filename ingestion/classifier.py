@@ -5,9 +5,9 @@ and evaluates each incoming email against them.  The first matching rule wins.
 
 Message types
 -------------
-TRANSACTION_ALERT  → sent to parser system.
-INVESTMENT_NOTICE  → sent to parser system.
-STATEMENT          → stored in unparsed queue (later phase).
+TRANSACTION_ALERT  → transaction handler (``TransactionParser`` + ledger upsert).
+INVESTMENT_NOTICE  → investment handler (currently queues to ``unparsed_messages``; extend later).
+STATEMENT          → statement handler (currently queues to ``unparsed_messages``; extend later).
 SINK               → silently discarded.
 OTHER              → catch-all; stored in unparsed queue.
 """

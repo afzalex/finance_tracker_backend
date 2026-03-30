@@ -223,6 +223,28 @@ def test_statement_classification_goes_to_unparsed(db: Session) -> None:
     assert enr.parser_id is None
 
 
+def test_investment_notice_classification_goes_to_unparsed(db: Session) -> None:
+    classification = seed_classification(
+        db, message_type="INVESTMENT_NOTICE", subject_match_regex=r"(?i)SIP|mutual fund"
+    )
+    email = _email(subject="Your SIP for March")
+    stats = _process_emails([email], db)
+
+    assert stats["unparsed"] == 1
+    assert db.query(Transaction).count() == 0
+    row = db.query(UnparsedMessage).first()
+    assert row is not None
+    assert row.reason == "classification:INVESTMENT_NOTICE"
+
+    fetched = _fetched_by_mail_id(db, email.mail_id)
+    assert fetched is not None
+    enr = _enrichment(db, fetched.id)
+    assert enr is not None
+    assert enr.classification_id == classification.id
+    assert enr.classification_reason == "Test rule"
+    assert enr.parser_id is None
+
+
 # ── Parse failure ─────────────────────────────────────────────────────────────
 
 def test_parse_failure_goes_to_unparsed(db: Session) -> None:
@@ -292,6 +314,33 @@ def test_duplicate_transaction_is_skipped(db: Session) -> None:
     assert stats["parsed"] == 1
     assert stats["duplicate"] == 1
     assert db.query(Transaction).count() == 1
+
+
+def test_reprocessing_same_mail_replaces_transaction(db: Session) -> None:
+    """Re-ingesting the same message_id deletes prior ledger rows for that mail before insert."""
+    seed_classification(db, message_type="TRANSACTION_ALERT", sender_match_regex=r"hdfcbank")
+    seed_parser(
+        db,
+        sender_match_regex=r"hdfcbank",
+        provider="HDFC",
+        body_extract_regex=(
+            r"A/c\s+(?P<account_id>\w+)\s+(?P<txn_isdebit>debited)\s+INR\s+(?P<amount>[\d,.]+)"
+            r".*?ref\s+(?P<txn_id>\w+)"
+        ),
+    )
+    body = "A/c XX1234 debited INR 500.00 ref TXN999"
+    email = _email(msg_id="same-msg", body=body)
+
+    stats1 = _process_emails([email], db)
+    assert stats1["parsed"] == 1
+    assert db.query(Transaction).filter(Transaction.mail_id == "same-msg").count() == 1
+
+    stats2 = _process_emails([email], db)
+    assert stats2["parsed"] == 1
+    assert stats2["duplicate"] == 0
+    assert db.query(Transaction).count() == 1
+    row = db.query(Transaction).filter(Transaction.mail_id == "same-msg").one()
+    assert row.amount_parsed == 500.0
 
 
 # ── Re-process: enrichment always refreshed ───────────────────────────────────

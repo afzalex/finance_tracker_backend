@@ -37,6 +37,11 @@ parsers/__init__.py
     ``Transaction`` ORM columns.  Computes a confidence score (0–100) based
     on how many high-value fields were extracted.
 
+handlers/
+    Post-classification dispatch: one module per ``MessageType`` (sink,
+    transaction alert, investment, statement, other).  ``registry.dispatch``
+    selects the handler after ``MessageClassifier`` runs.
+
 utils.py
     Shared regex helpers used by the classifier and parser:
 
@@ -70,18 +75,17 @@ Pipeline stages
    ``fetched_email_enrichments`` and are updated each run.
 
 4. **Classify** — ``MessageClassifier.classify()`` determines the email's
-   ``MessageType``.  ``SINK`` emails are discarded immediately.  Non-alert
-   types are stored in ``unparsed_messages`` with a reason.
+   ``MessageType``.
 
-5. **Parse** — ``TransactionParser.parse()`` tries each active parser row
-   against the email body in priority order.  If the confidence score is
-   below ``CONFIDENCE_THRESHOLD`` (default 50), the email is treated as
-   unparsed.
+5. **Handle** — ``handlers.dispatch()`` routes by type: ``SINK`` skips;
+   ``TRANSACTION_ALERT`` runs the transaction parser and ledger upsert;
+   ``INVESTMENT_NOTICE`` / ``STATEMENT`` / ``OTHER`` use dedicated handlers
+   (default: queue in ``unparsed_messages`` until extended).
 
-6. **Save** — a passing parse result is upserted into ``transactions``.
-   Duplicates are detected via the ``txn_id`` field (bank-provided reference
-   number) when present.  A previously unparsed message for the same Gmail
-   message ID is removed from ``unparsed_messages``.
+6. **Parse / save (transaction path)** — ``TransactionParser.parse()`` tries
+   each active parser row.  If confidence is below ``CONFIDENCE_THRESHOLD``
+   (default 50), the email is treated as unparsed.  A passing result is
+   upserted into ``transactions``; duplicates use ``txn_id`` when present.
 
 7. **Cursor** — after a successful Gmail history sync the new
    ``historyId`` is persisted to the ``ingest_cursor`` table so the next
