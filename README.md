@@ -43,6 +43,8 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+Optional: from `backend/`, `make help` lists shortcuts (`make install`, `make test`, `make api`, `make openapi`, …).
+
 ### 3. Install the package
 
 This registers the `backend` package in the venv so the CLI works from any directory:
@@ -168,6 +170,48 @@ uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Interactive docs available at [http://localhost:8000/docs](http://localhost:8000/docs).
+
+---
+
+## Generate a TypeScript client (React)
+
+FastAPI exposes an OpenAPI spec (Swagger). You can generate a TypeScript client for your React app from it.
+
+### Export OpenAPI spec (no server needed)
+
+From `backend/` (with your venv activated — `source .venv/bin/activate`):
+
+```bash
+PYTHONPATH=.. python scripts/export_openapi.py openapi.json
+```
+
+Or explicitly:
+
+```bash
+PYTHONPATH=.. .venv/bin/python scripts/export_openapi.py openapi.json
+```
+
+### Generate a TS (Axios) client
+
+Requires Node.js (for `npx`).
+
+```bash
+chmod +x scripts/generate_ts_client.sh
+./scripts/generate_ts_client.sh
+# or: ./scripts/generate_ts_client.sh ../frontend/src/api
+```
+
+With no arguments, output goes to `../frontend/src/api` (sibling `frontend` repo). Override with a path.
+
+From `backend/`, `make gen-client` uses the same default; override with `make gen-client OUT=/path/to/out`.
+
+Then in React, set Axios `baseURL` to `http://localhost:8000` and call the generated APIs in `api/`.
+
+The generated client is Axios-based, so make sure your frontend has Axios installed:
+
+```bash
+npm i axios
+```
 
 ### Endpoints
 

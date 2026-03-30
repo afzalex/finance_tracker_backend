@@ -1,0 +1,1009 @@
+{
+  "components": {
+    "schemas": {
+      "AccountRead": {
+        "description": "Account/card/wallet summary returned by ``GET /api/v1/accounts``.",
+        "properties": {
+          "account_id": {
+            "title": "Account Id",
+            "type": "string"
+          },
+          "account_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Type"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "provider",
+          "account_id"
+        ],
+        "title": "AccountRead",
+        "type": "object"
+      },
+      "CashflowPoint": {
+        "description": "Income vs expense for a single calendar month (used in cashflow charts).",
+        "properties": {
+          "expense": {
+            "title": "Expense",
+            "type": "number"
+          },
+          "income": {
+            "title": "Income",
+            "type": "number"
+          },
+          "month": {
+            "title": "Month",
+            "type": "string"
+          }
+        },
+        "required": [
+          "month",
+          "income",
+          "expense"
+        ],
+        "title": "CashflowPoint",
+        "type": "object"
+      },
+      "CategoryBreakdown": {
+        "description": "Spending aggregated by transaction category for a time window.",
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "number"
+          },
+          "transaction_count": {
+            "title": "Transaction Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "category",
+          "total",
+          "transaction_count"
+        ],
+        "title": "CategoryBreakdown",
+        "type": "object"
+      },
+      "Direction": {
+        "description": "Money flow direction mirroring the ORM enum, exposed in API responses.",
+        "enum": [
+          "DEBIT",
+          "CREDIT"
+        ],
+        "title": "Direction",
+        "type": "string"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "MerchantSummary": {
+        "description": "Total spend and transaction count for a single merchant.",
+        "properties": {
+          "merchant": {
+            "title": "Merchant",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "number"
+          },
+          "transaction_count": {
+            "title": "Transaction Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "merchant",
+          "total",
+          "transaction_count"
+        ],
+        "title": "MerchantSummary",
+        "type": "object"
+      },
+      "MonthlyStats": {
+        "description": "Debit/credit/net totals for a single calendar month.",
+        "properties": {
+          "month": {
+            "title": "Month",
+            "type": "string"
+          },
+          "net": {
+            "title": "Net",
+            "type": "number"
+          },
+          "total_credit": {
+            "title": "Total Credit",
+            "type": "number"
+          },
+          "total_debit": {
+            "title": "Total Debit",
+            "type": "number"
+          }
+        },
+        "required": [
+          "month",
+          "total_debit",
+          "total_credit",
+          "net"
+        ],
+        "title": "MonthlyStats",
+        "type": "object"
+      },
+      "TransactionListResponse": {
+        "description": "Paginated wrapper returned by ``GET /api/v1/transactions``.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TransactionRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size"
+        ],
+        "title": "TransactionListResponse",
+        "type": "object"
+      },
+      "TransactionRead": {
+        "description": "Full transaction response including DB-assigned ``id`` and audit fields.",
+        "properties": {
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "account_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Type"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
+          "amount_parsed": {
+            "title": "Amount Parsed",
+            "type": "number"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "currency": {
+            "default": "INR",
+            "title": "Currency",
+            "type": "string"
+          },
+          "direction": {
+            "$ref": "#/components/schemas/Direction"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "mail_id": {
+            "title": "Mail Id",
+            "type": "string"
+          },
+          "merchant": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Merchant"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "sub_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sub Type"
+          },
+          "transacted_at": {
+            "format": "date-time",
+            "title": "Transacted At",
+            "type": "string"
+          },
+          "transaction_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transaction Type"
+          },
+          "txn_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Txn Id"
+          }
+        },
+        "required": [
+          "amount_parsed",
+          "direction",
+          "transacted_at",
+          "id",
+          "mail_id",
+          "created_at"
+        ],
+        "title": "TransactionRead",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Read-only REST API that surfaces financial data collected by the CLI ingestion tool. All writes are performed exclusively by the CLI.",
+    "title": "Finance Tracker API",
+    "version": "2.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/accounts": {
+      "get": {
+        "description": "Return all known accounts/cards/wallets.\n\nTODO: Implement in AccountService.",
+        "operationId": "list_accounts_api_v1_accounts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AccountRead"
+                  },
+                  "title": "Response List Accounts Api V1 Accounts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Accounts",
+        "tags": [
+          "Accounts"
+        ]
+      }
+    },
+    "/api/v1/accounts/{account_id}/transactions": {
+      "get": {
+        "description": "Return transaction history for a specific account.\n\nTODO: Implement in AccountService.",
+        "operationId": "account_transactions_api_v1_accounts__account_id__transactions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "account_id",
+            "required": true,
+            "schema": {
+              "title": "Account Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Account Transactions Api V1 Accounts  Account Id  Transactions Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Account Transactions",
+        "tags": [
+          "Accounts"
+        ]
+      }
+    },
+    "/api/v1/analytics/anomalies": {
+      "get": {
+        "description": "Highlight transactions significantly above usual category amounts.\n\nTODO: Implement in AnalyticsService.",
+        "operationId": "anomaly_highlights_api_v1_analytics_anomalies_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Anomaly Highlights Api V1 Analytics Anomalies Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Anomaly Highlights",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
+    "/api/v1/analytics/cashflow": {
+      "get": {
+        "description": "Monthly income vs expense for the past N months.\n\nTODO: Implement in AnalyticsService.",
+        "operationId": "cashflow_api_v1_analytics_cashflow_get",
+        "parameters": [
+          {
+            "description": "Number of months to return",
+            "in": "query",
+            "name": "months",
+            "required": false,
+            "schema": {
+              "default": 12,
+              "description": "Number of months to return",
+              "maximum": 60,
+              "minimum": 1,
+              "title": "Months",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CashflowPoint"
+                  },
+                  "title": "Response Cashflow Api V1 Analytics Cashflow Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cashflow",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
+    "/api/v1/analytics/category-breakdown": {
+      "get": {
+        "description": "Spending by category.\n\nTODO: Implement in AnalyticsService.",
+        "operationId": "category_breakdown_api_v1_analytics_category_breakdown_get",
+        "parameters": [
+          {
+            "description": "Filter to a specific month (YYYY-MM)",
+            "in": "query",
+            "name": "month",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter to a specific month (YYYY-MM)",
+              "title": "Month"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CategoryBreakdown"
+                  },
+                  "title": "Response Category Breakdown Api V1 Analytics Category Breakdown Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Category Breakdown",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
+    "/api/v1/analytics/recurring": {
+      "get": {
+        "description": "Detect recurring transactions by pattern.\n\nTODO: Implement in AnalyticsService.",
+        "operationId": "recurring_transactions_api_v1_analytics_recurring_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Recurring Transactions Api V1 Analytics Recurring Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Recurring Transactions",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
+    "/api/v1/analytics/top-merchants": {
+      "get": {
+        "description": "Top merchants by total spend.\n\nTODO: Implement in AnalyticsService.",
+        "operationId": "top_merchants_api_v1_analytics_top_merchants_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "month",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Month"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MerchantSummary"
+                  },
+                  "title": "Response Top Merchants Api V1 Analytics Top Merchants Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Top Merchants",
+        "tags": [
+          "Analytics"
+        ]
+      }
+    },
+    "/api/v1/stats": {
+      "get": {
+        "description": "Return total debits, total credits, and net cashflow for a given month.\n\nTODO: Implement in StatsService.",
+        "operationId": "monthly_stats_api_v1_stats_get",
+        "parameters": [
+          {
+            "description": "Month in YYYY-MM format (default: current month)",
+            "in": "query",
+            "name": "month",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Month in YYYY-MM format (default: current month)",
+              "title": "Month"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MonthlyStats"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Monthly Stats",
+        "tags": [
+          "Stats"
+        ]
+      }
+    },
+    "/api/v1/transactions": {
+      "get": {
+        "operationId": "list_transactions_api_v1_transactions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "account_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Account Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "provider",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Provider"
+            }
+          },
+          {
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
+          },
+          {
+            "in": "query",
+            "name": "direction",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Direction"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Direction"
+            }
+          },
+          {
+            "description": "ISO date YYYY-MM-DD",
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ISO date YYYY-MM-DD",
+              "title": "Date From"
+            }
+          },
+          {
+            "description": "ISO date YYYY-MM-DD",
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "ISO date YYYY-MM-DD",
+              "title": "Date To"
+            }
+          },
+          {
+            "description": "Search by merchant or payee",
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Search by merchant or payee",
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_by",
+            "required": false,
+            "schema": {
+              "default": "transacted_at",
+              "pattern": "^(transacted_at|amount|merchant)$",
+              "title": "Sort By",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort_order",
+            "required": false,
+            "schema": {
+              "default": "desc",
+              "pattern": "^(asc|desc)$",
+              "title": "Sort Order",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransactionListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Transactions",
+        "tags": [
+          "Transactions"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "description": "Liveness check \u2014 returns ``{\"status\": \"ok\"}`` when the server is running.",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Health Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health",
+        "tags": [
+          "Health"
+        ]
+      }
+    }
+  }
+}
