@@ -43,7 +43,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Optional: from `backend/`, `make help` lists shortcuts (`make install`, `make test`, `make api`, `make openapi`, …).
+Optional: from `backend/`, `make help` lists shortcuts (`make install`, `make test`, `make coverage`, `make api`, `make openapi`, …).
 
 ### 3. Install the package
 
@@ -170,6 +170,24 @@ uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Interactive docs available at [http://localhost:8000/docs](http://localhost:8000/docs).
+
+---
+
+## Testing
+
+Run from this repository root — the **`backend/`** directory (where this `README` lives).
+
+```bash
+make test
+```
+
+**Coverage** for the entire installable **`backend`** package (application code only: test files and Alembic migrations are omitted from totals):
+
+```bash
+make coverage
+```
+
+Prints a terminal summary with missing lines; writes an HTML report under **`htmlcov/`** (gitignored). Settings are in **`pyproject.toml`** (`[tool.coverage.run]` / `[tool.coverage.report]`). Requires `pytest-cov` (included in `requirements.txt`).
 
 ---
 

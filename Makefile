@@ -1,7 +1,12 @@
-# Convenience targets for local development (run from backend/).
+# Convenience targets for local development.
+#
+# **Repository root** is this directory — the ``backend/`` folder (this Makefile lives there).
+# Paths such as ``../frontend/...`` are relative to that root (sibling frontend in a monorepo), not
+# “one directory above the project.”
 #
 #   make install      # venv + deps + editable backend package
 #   make test
+#   make coverage     # pytest with full-package coverage (HTML → htmlcov/)
 #   make api          # uvicorn with reload
 #   make openapi      # write openapi.json (no server)
 #   make gen-client [OUT=../frontend/src/api]
@@ -9,21 +14,23 @@
 #   make migrate      # alembic upgrade head
 
 MAKEFILE_DIR := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+# Parent of ``backend/`` on PYTHONPATH so ``import backend`` resolves (setuptools package name).
 export PYTHONPATH := $(abspath $(MAKEFILE_DIR)/..)
 
-# Default output for generated TS client (sibling repo layout: finance-tracker/frontend/…)
+# Default output for generated TS client (from ``backend/``, sibling ``../frontend``)
 OUT ?= ../frontend/src/api
 
 VENV         := $(MAKEFILE_DIR)/.venv
 PYTHON       := $(VENV)/bin/python
 PIP          := $(VENV)/bin/pip
-.PHONY: help install test api openapi gen-client ingest migrate shell
+.PHONY: help install test coverage api openapi gen-client ingest migrate shell
 
 help:
 	@echo "Finance Tracker backend — common commands"
 	@echo ""
 	@echo "  make install              Create .venv if missing; pip install deps + editable package"
 	@echo "  make test                 Run pytest"
+	@echo "  make coverage             Run pytest with coverage for the backend package (htmlcov/)"
 	@echo "  make api                  Run FastAPI (http://0.0.0.0:8000)"
 	@echo "  make openapi              Export OpenAPI to openapi.json"
 	@echo "  make gen-client [OUT=…]   Generate TS Axios client (default OUT=$(OUT); needs Node npx; frontend needs axios)"
@@ -41,6 +48,14 @@ install: $(PYTHON)
 
 test: $(PYTHON)
 	@"$(PYTHON)" -m pytest $(ARGS)
+
+coverage: $(PYTHON)
+	@cd "$(MAKEFILE_DIR)" && "$(PYTHON)" -m pytest tests/ \
+		--import-mode=importlib \
+		--cov=backend \
+		--cov-report=term-missing \
+		--cov-report=html \
+		$(ARGS)
 
 api: $(PYTHON)
 	@"$(PYTHON)" -m uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000

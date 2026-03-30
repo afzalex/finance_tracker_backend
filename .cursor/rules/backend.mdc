@@ -1,0 +1,13 @@
+---
+description: Finance Tracker backend — repo root and paths
+globs: "**/*"
+alwaysApply: true
+---
+
+# Project root
+
+The **repository root for this backend** is the directory that contains this file’s tree: the **`backend/`** folder (where `pyproject.toml`, `Makefile`, `app/`, `ingestion/` live).
+
+- Treat **`backend/`** as the project root for commands (`make test`, `make coverage`, `make api`), not a parent path like `../` as “the project.”
+- Paths such as **`../frontend/...`** are intentional when the monorepo has a **sibling** `frontend` next to `backend`; they are relative to **`backend/`**, not “escape upward from the wrong folder.”
+- Python imports use the package name **`backend`** (e.g. `backend.app.main`); `PYTHONPATH` must include the **parent** of the `backend` package directory so `import backend` works (see `Makefile` `export PYTHONPATH` and `pip install -e .`).
