@@ -4,8 +4,11 @@ Schemas are used by FastAPI for request/response validation and OpenAPI docs.
 They are separate from ORM models to maintain a clean separation of concerns.
 """
 
+from __future__ import annotations
+
 from datetime import datetime
 from enum import Enum
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -22,18 +25,19 @@ class Direction(str, Enum):
 class TransactionBase(BaseModel):
     """Core transaction fields shared by request and response schemas."""
 
-    provider: str
-    account_id: str
-    amount: float
+    provider: Optional[str] = None
+    account_id: Optional[str] = None
+    amount: Optional[str] = None
+    amount_parsed: float
+    currency: str = "INR"
     direction: Direction
-    merchant: str | None = None
-    category: str | None = None
-    channel: str | None = None
-    transaction_type: str | None = None
-    sub_type: str | None = None
-    account_type: str | None = None
-    status: str | None = None
-    txn_id: str | None = None
+    merchant: Optional[str] = None
+    category: Optional[str] = None
+    transaction_type: Optional[str] = None
+    sub_type: Optional[str] = None
+    account_type: Optional[str] = None
+    status: Optional[str] = None
+    txn_id: Optional[str] = None
     transacted_at: datetime
 
 
@@ -64,8 +68,8 @@ class AccountRead(BaseModel):
     id: int
     provider: str
     account_id: str
-    account_type: str | None = None
-    display_name: str | None = None
+    account_type: Optional[str] = None
+    display_name: Optional[str] = None
 
 
 # ── Stats / Analytics ─────────────────────────────────────────────────────────

@@ -18,6 +18,18 @@ Python backend for the Finance Tracker project. Comprises two things:
 
 All commands below are run from inside the `backend/` directory.
 
+### 0. Use Python 3.11+
+
+This repo is intended to run on **Python 3.11+**. If you have `pyenv`, this folder includes a `.python-version` file, so:
+
+```bash
+pyenv install 3.11.9
+pyenv local 3.11.9
+python --version
+```
+
+If you don’t use `pyenv`, just make sure `python` resolves to 3.11+ before continuing.
+
 ### 1. Create and activate a virtual environment
 
 ```bash

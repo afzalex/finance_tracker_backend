@@ -1,9 +1,14 @@
 """Transactions router — paginated, filterable transaction list."""
 
+from __future__ import annotations
+
+from datetime import date
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from backend.app.schemas import TransactionListResponse
+from backend.app.schemas import Direction, TransactionListResponse
+from backend.app.services.transaction_service import TransactionListParams, TransactionService
 from backend.database import get_db
 
 router = APIRouter()
@@ -17,16 +22,28 @@ async def list_transactions(
     account_id: str | None = Query(None),
     provider: str | None = Query(None),
     category: str | None = Query(None),
-    direction: str | None = Query(None, pattern="^(DEBIT|CREDIT)$"),
-    channel: str | None = Query(None),
-    date_from: str | None = Query(None, description="ISO date YYYY-MM-DD"),
-    date_to: str | None = Query(None, description="ISO date YYYY-MM-DD"),
+    direction: Direction | None = Query(None),
+    date_from: date | None = Query(None, description="ISO date YYYY-MM-DD"),
+    date_to: date | None = Query(None, description="ISO date YYYY-MM-DD"),
     search: str | None = Query(None, description="Search by merchant or payee"),
     sort_by: str = Query("transacted_at", pattern="^(transacted_at|amount|merchant)$"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
 ) -> TransactionListResponse:
-    """Return a paginated, filtered list of all transactions.
+    service = TransactionService(db)
+    items, total = service.list_transactions(
+        TransactionListParams(
+            page=page,
+            page_size=page_size,
+            account_id=account_id,
+            provider=provider,
+            category=category,
+            direction=direction,
+            date_from=date_from,
+            date_to=date_to,
+            search=search,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+    )
 
-    TODO: Implement query in TransactionService.
-    """
-    raise NotImplementedError
+    return TransactionListResponse(items=items, total=total, page=page, page_size=page_size)
