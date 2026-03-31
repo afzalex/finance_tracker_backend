@@ -14,10 +14,12 @@ from backend.app.models.classification import Classification
 from backend.app.models.fetched_email import FetchedEmail
 from backend.app.models.fetched_email_enrichment import FetchedEmailEnrichment
 from backend.app.models.parser import Parser
+from backend.app.models.unparsed_message import UnparsedMessage
 from backend.app.schemas import (
     FetchedEmailEnrichmentDetailRead,
     FetchedEmailRead,
     FetchedEmailWithEnrichmentResponse,
+    UnparsedEmailListItem,
 )
 from backend.database import get_db
 
@@ -46,6 +48,52 @@ def _enrichment_detail(
         classification_name=c_name,
         parser_name=p_name,
     )
+
+
+def _rule_name(db: Session, classification_id: int | None, parser_id: int | None) -> tuple[str | None, str | None]:
+    c_name = None
+    p_name = None
+    if classification_id is not None:
+        cl = db.get(Classification, classification_id)
+        c_name = cl.name if cl else None
+    if parser_id is not None:
+        pr = db.get(Parser, parser_id)
+        p_name = pr.name if pr else None
+    return c_name, p_name
+
+
+@router.get(
+    "/unparsed",
+    response_model=list[UnparsedEmailListItem],
+    summary="List emails in the unparsed queue",
+)
+async def list_unparsed_emails(db: Session = Depends(get_db)) -> list[UnparsedEmailListItem]:
+    """Return unparsed queue rows with ``mail_id`` and subject/snippet from ``fetched_emails`` (newest first)."""
+    stmt = (
+        select(UnparsedMessage, FetchedEmail)
+        .join(FetchedEmail, UnparsedMessage.fetched_email_id == FetchedEmail.id)
+        .order_by(UnparsedMessage.created_at.desc(), UnparsedMessage.id.desc())
+    )
+    rows = db.execute(stmt).all()
+    out: list[UnparsedEmailListItem] = []
+    for um, fe in rows:
+        c_name, p_name = _rule_name(db, um.classification_id, um.parser_id)
+        out.append(
+            UnparsedEmailListItem(
+                id=um.id,
+                fetched_email_id=um.fetched_email_id,
+                mail_id=fe.mail_id,
+                subject=fe.subject,
+                snippet=fe.snippet,
+                reason=um.reason,
+                classification_id=um.classification_id,
+                parser_id=um.parser_id,
+                classification_name=c_name,
+                parser_name=p_name,
+                created_at=um.created_at,
+            )
+        )
+    return out
 
 
 @router.get(

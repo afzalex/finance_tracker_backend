@@ -8,11 +8,56 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from backend.app.schemas import Direction, TransactionListResponse
+from backend.app.schemas import AccountType, Direction, Status, SubType, TransactionListResponse, TransactionRead, TransactionType
 from backend.app.services.transaction_service import TransactionListParams, TransactionService
 from backend.database import get_db
 
 router = APIRouter()
+
+def _upper(v: str | None) -> str | None:
+    return v.upper() if isinstance(v, str) else None
+
+def _enum_or_none(enum_cls, v: str | None):
+    if v is None:
+        return None
+    try:
+        return enum_cls(_upper(v))
+    except Exception:
+        return None
+
+def _status(v: str | None):
+    if v is None:
+        return None
+    try:
+        return Status(_upper(v))
+    except Exception:
+        return Status.UNKNOWN
+
+def _read(txn) -> TransactionRead:
+    # Legacy DB tolerance: invalid values are coerced per legacy README.
+    # - transaction_type/sub_type/account_type: invalid -> None
+    # - status: invalid -> UNKNOWN
+    return TransactionRead.model_validate(
+        {
+            "id": txn.id,
+            "mail_id": txn.mail_id,
+            "provider": _upper(txn.provider),
+            "account_id": txn.account_id,
+            "amount": txn.amount,
+            "amount_parsed": txn.amount_parsed,
+            "currency": txn.currency,
+            "direction": txn.direction,
+            "merchant": txn.merchant,
+            "category": txn.category,
+            "transaction_type": _enum_or_none(TransactionType, txn.transaction_type),
+            "sub_type": _enum_or_none(SubType, txn.sub_type),
+            "account_type": _enum_or_none(AccountType, txn.account_type),
+            "status": _status(txn.status),
+            "txn_id": txn.txn_id,
+            "transacted_at": txn.transacted_at,
+            "created_at": txn.created_at,
+        }
+    )
 
 
 @router.get("", response_model=TransactionListResponse)
@@ -47,4 +92,9 @@ async def list_transactions(
         )
     )
 
-    return TransactionListResponse(items=items, total=total, page=page, page_size=page_size)
+    return TransactionListResponse(
+        items=[_read(t) for t in items],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )

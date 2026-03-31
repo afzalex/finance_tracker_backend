@@ -238,6 +238,15 @@ npm i axios
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/v1/transactions` | Paginated, filterable transaction list |
+| `GET` | `/api/v1/classifications` | Email classifier rules (priority order) |
+| `POST` | `/api/v1/classifications` | Create a classification rule |
+| `PATCH` | `/api/v1/classifications/{id}` | Partial update |
+| `DELETE` | `/api/v1/classifications/{id}` | Soft deactivate (`is_active` → false; row kept) |
+| `GET` | `/api/v1/parsers` | Transaction parser rules (priority order) |
+| `POST` | `/api/v1/parsers` | Create a parser rule |
+| `PATCH` | `/api/v1/parsers/{id}` | Partial update |
+| `DELETE` | `/api/v1/parsers/{id}` | Soft deactivate (`is_active` → false; row kept) |
+| `GET` | `/api/v1/emails/unparsed` | Unparsed queue (`mail_id`, reason, rule names) |
 | `GET` | `/api/v1/emails/{mail_id}` | Cached raw email + enrichment by provider message id (`fetched_emails.mail_id`) |
 | `GET` | `/api/v1/accounts` | All known accounts / cards / wallets |
 | `GET` | `/api/v1/stats` | Monthly debit / credit / net totals |

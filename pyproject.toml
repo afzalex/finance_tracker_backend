@@ -24,6 +24,7 @@ source_pkgs = ["backend"]
 omit = [
     "*/migrations/*",
     "*/tests/*",
+    "*/ingestion/gmail/*",
 ]
 
 [tool.coverage.report]
