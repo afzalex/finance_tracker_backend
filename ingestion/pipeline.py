@@ -89,6 +89,7 @@ def _ingest_args_for_poll_tick(base: argparse.Namespace) -> argparse.Namespace:
     return argparse.Namespace(
         once=None,
         force=None,
+        only_mail_id=None,
         poll=False,
         mail=bool(getattr(base, "mail", True)),
         unparsed=bool(getattr(base, "unparsed", False)),
@@ -110,7 +111,9 @@ def run_ingest(args: argparse.Namespace) -> None:
         return
 
     with SessionLocal() as db:
-        if getattr(args, "offline", False):
+        if getattr(args, "only_mail_id", None):
+            _ingest_one_from_fetched(db, str(getattr(args, "only_mail_id")))
+        elif getattr(args, "offline", False):
             _ingest_offline(db) # ingest from fetched_emails table
         elif getattr(args, "unparsed", False):
             _ingest_from_unparsed(db) # ingest from unparsed_messages table
@@ -269,6 +272,26 @@ def _ingest_offline(db: Session) -> None:
         for r in rows
     ]
     stats = _process_emails(emails, db)
+    _print_stats(stats)
+
+def _ingest_one_from_fetched(db: Session, mail_id: str) -> None:
+    """Re-classify and re-parse one stored fetched email by provider ``mail_id``."""
+    row = db.query(FetchedEmail).filter(FetchedEmail.mail_id == mail_id).one_or_none()
+    if row is None:
+        print(f"No fetched_emails row for mail_id {mail_id!r}", file=sys.stderr)
+        _print_stats(dict(fetched=0, parsed=0, unparsed=0, skipped=0, duplicate=0))
+        raise SystemExit(1)
+    email = EmailContent(
+        mail_id=row.mail_id,
+        thread_id=row.thread_id or "",
+        subject=row.subject or "",
+        sender=row.sender or "",
+        snippet=row.snippet or "",
+        internal_date_ms=row.internal_date_ms,
+        body_text=row.body_text or "",
+        fetched_email_id=row.id,
+    )
+    stats = _process_emails([email], db)
     _print_stats(stats)
 
 

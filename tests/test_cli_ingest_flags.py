@@ -57,6 +57,7 @@ def test_ingest_args_for_poll_tick_strips_run_modes() -> None:
         poll=True,
         once=3,
         force=10,
+        only_mail_id="mid",
         mail=False,
         unparsed=True,
         offline=False,
@@ -65,6 +66,12 @@ def test_ingest_args_for_poll_tick_strips_run_modes() -> None:
     assert tick.poll is False
     assert tick.once is None
     assert tick.force is None
+    assert getattr(tick, "only_mail_id", None) is None
     assert tick.mail is False
     assert tick.unparsed is True
     assert tick.offline is False
+
+
+def test_ingest_only_mail_id_parses() -> None:
+    args = build_parser().parse_args(["ingest", "--only-mail-id", "abc123"])
+    assert args.only_mail_id == "abc123"

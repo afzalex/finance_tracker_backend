@@ -94,6 +94,12 @@ def _add_run_mode_flags(p: argparse.ArgumentParser) -> None:
             "With N, stop after N newest messages in that window (default: all)."
         ),
     )
+    mode.add_argument(
+        "--only-mail-id",
+        dest="only_mail_id",
+        metavar="MAIL_ID",
+        help="Process exactly one cached email from fetched_emails by provider mail_id (no Gmail fetch).",
+    )
 
 
 def _add_source_flags(p: argparse.ArgumentParser) -> None:

@@ -391,6 +391,30 @@ def test_reprocess_from_db_row_updates_enrichment(db: Session) -> None:
     assert enr.parser_id == parser.id
 
 
+def test_ingest_one_from_fetched_by_mail_id(db: Session) -> None:
+    """New CLI feature: re-process one cached email by mail_id."""
+    from backend.ingestion.pipeline import _ingest_one_from_fetched
+
+    seed_classification(db, message_type="TRANSACTION_ALERT", sender_match_regex=r"hdfcbank")
+    seed_parser(
+        db,
+        sender_match_regex=r"hdfcbank",
+        provider="HDFC",
+        body_extract_regex=(
+            r"A/c\s+(?P<account_id>\w+)\s+(?P<txn_isdebit>debited)\s+INR\s+(?P<amount>[\d,.]+)"
+            r".*?ref\s+(?P<txn_id>\w+)"
+        ),
+    )
+
+    # First, ensure a fetched_emails row exists (insert-only cache).
+    email = _email(msg_id="only-mid", body="A/c XX1234 debited INR 500.00 ref TXN888")
+    _process_emails([email], db)
+
+    # Then re-process only that mail_id from the cached row.
+    _ingest_one_from_fetched(db, "only-mid")
+    assert db.query(Transaction).filter(Transaction.mail_id == "only-mid").count() == 1
+
+
 # ── Multiple emails in one batch ──────────────────────────────────────────────
 
 def test_multiple_emails_are_all_processed(db: Session) -> None:
