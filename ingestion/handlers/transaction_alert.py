@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from backend.config import settings
@@ -13,6 +14,7 @@ from backend.ingestion.persistence import (
     upsert_transaction,
     upsert_unparsed,
 )
+logger = logging.getLogger(__name__)
 
 
 class ParserAttemptError(Exception):

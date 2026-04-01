@@ -21,6 +21,7 @@ Source flags (mutually exclusive; apply to each poll tick when using ``--poll`` 
 --mail      (default) Fetch from Gmail.
 --unparsed  Re-process unparsed queue.
 --offline   Re-process from stored fetched_emails.
+--limit N   With --offline or --unparsed: process at most N messages (see help).
 """
 
 import argparse
@@ -46,6 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     ingest_p = sub.add_parser("ingest", help="Fetch and store transactions from Gmail.")
     _add_run_mode_flags(ingest_p)
     _add_source_flags(ingest_p)
+    _add_process_limit_flag(ingest_p)
 
     # ── poll ──────────────────────────────────────────────────────────────────
     poll_p = sub.add_parser(
@@ -53,6 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run ingest every POLL_SECONDS until SIGINT/SIGTERM (same source flags as ingest).",
     )
     _add_source_flags(poll_p)
+    _add_process_limit_flag(poll_p)
 
     # ── export ────────────────────────────────────────────────────────────────
     export_p = sub.add_parser("export", help="Export transactions to a CSV file.")
@@ -102,6 +105,21 @@ def _add_run_mode_flags(p: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_process_limit_flag(p: argparse.ArgumentParser) -> None:
+    """Cap how many messages are processed in offline / unparsed modes (ignored for Gmail)."""
+    p.add_argument(
+        "--limit",
+        type=int,
+        metavar="N",
+        default=None,
+        help=(
+            "With --offline: at most N cached emails (oldest first). "
+            "With --unparsed: at most N queue rows (oldest first). "
+            "Ignored for Gmail (use --once or --force N)."
+        ),
+    )
+
+
 def _add_source_flags(p: argparse.ArgumentParser) -> None:
     """Add mutually exclusive source flags to a sub-command parser."""
     src = p.add_mutually_exclusive_group()
@@ -118,8 +136,9 @@ def main() -> None:
     from backend.config import settings  # noqa: PLC0415
     from backend.log_levels import parse_log_level  # noqa: PLC0415
 
+    log = logging.getLogger("backend.cli")
     logging.basicConfig(
-        level=parse_log_level(settings.log_level),
+        level=parse_log_level(settings.log_level or "INFO"),
         format="%(asctime)s %(levelname)s %(name)s — %(message)s",
     )
 
@@ -131,14 +150,26 @@ def main() -> None:
         try:
             run_oauth_flow()
         except GmailAuthError as exc:
-            print(f"Error: {exc}", file=sys.stderr)
+            log.error("Error: %s", exc)
             sys.exit(1)
     elif args.command == "ingest":
+        from backend.ingestion.gmail.auth import GmailAuthError  # noqa: PLC0415
         from backend.ingestion.pipeline import run_ingest  # noqa: PLC0415
-        run_ingest(args)
+
+        try:
+            run_ingest(args)
+        except GmailAuthError as exc:
+            log.error("Error: %s", exc)
+            sys.exit(1)
     elif args.command == "poll":
+        from backend.ingestion.gmail.auth import GmailAuthError  # noqa: PLC0415
         from backend.ingestion.pipeline import run_poll  # noqa: PLC0415
-        run_poll(args)
+
+        try:
+            run_poll(args)
+        except GmailAuthError as exc:
+            log.error("Auth error: %s", exc)
+            sys.exit(1)
     elif args.command == "export":
         from backend.app.services.export_service import run_export  # noqa: PLC0415
         run_export(args)

@@ -5,6 +5,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.exception_handlers import emails_request_validation_handler
+from backend.app.lifecycle import scheduled_ingest_lifespan
+from backend.app.logging_setup import ensure_backend_stderr_logging
 from backend.app.routers import accounts, analytics, classifications, emails, parsers, stats, transactions
 
 
@@ -14,16 +16,20 @@ def create_app() -> FastAPI:
     Registers all API routers under ``/api/v1`` and adds CORS middleware
     permitting read-only access from local frontend dev servers.
     """
+    ensure_backend_stderr_logging()
+
     app = FastAPI(
         title="Finance Tracker API",
         version="2.0.0",
         description=(
             "REST API for ledger reads, cached emails, and classifier/parser management. "
-            "Creates/updates/deactivates rules in the DB (ingest still runs via the CLI). "
+            "While the server runs, incremental mail ingest can run on the same interval as "
+            "``poll_seconds`` (disable with ``API_SCHEDULED_INGEST_ENABLED=false``). "
             "DELETE on classifications/parsers only sets ``is_active`` false — rows are kept."
         ),
         docs_url="/docs",
         redoc_url="/redoc",
+        lifespan=scheduled_ingest_lifespan,
     )
 
     app.add_exception_handler(RequestValidationError, emails_request_validation_handler)

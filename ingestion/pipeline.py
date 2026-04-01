@@ -12,7 +12,6 @@ from __future__ import annotations
 import argparse
 import logging
 import signal
-import sys
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Iterator, Optional
@@ -24,7 +23,7 @@ from backend.app.models.fetched_email import FetchedEmail
 from backend.app.models.ingest_cursor import IngestCursor
 from backend.app.models.unparsed_message import UnparsedMessage
 from backend.config import settings
-from backend.database import SessionLocal
+from backend.database import SessionLocal, commit_with_retry
 from backend.ingestion.classifier import MessageClassifier
 from backend.ingestion.extraction import EmailContent, extract_email_content
 from backend.ingestion.gmail.auth import GmailAuthError
@@ -35,6 +34,7 @@ from backend.ingestion.persistence import (
     insert_fetched_email_raw,
     reset_fetched_email_enrichment,
     set_email_classification,
+    set_enrichment_processing_time_ms,
 )
 from backend.ingestion.parsers import TransactionParser
 
@@ -63,16 +63,32 @@ def _gmail_label_query(labels: list[str]) -> str:
     return "(" + " OR ".join(terms) + ")"
 
 
-def _iter_history_for_labels(
-    client: GmailClient, history_id: str, label_names: list[str]
-) -> Iterator[dict]:
-    """Merge ``history.list`` across labels (API allows one ``labelId`` per call); dedupe by message id."""
-    seen: set[str] = set()
+def _gmail_history_label_entries(
+    client: GmailClient, label_names: list[str]
+) -> list[tuple[str, str]]:
+    """Resolve user label names to Gmail label ids; log missing names once."""
+    entries: list[tuple[str, str]] = []
+    missing: list[str] = []
     for name in label_names:
         lid = client.get_label_id(name)
         if lid is None:
-            logger.warning("Gmail label %r not found; skipping for history sync", name)
-            continue
+            missing.append(name)
+        else:
+            entries.append((name, lid))
+    if missing:
+        logger.warning(
+            "Gmail label(s) not found; skipped for history sync (fix ``GMAIL_LABEL`` / ``gmail_label``): %s",
+            ", ".join(missing),
+        )
+    return entries
+
+
+def _iter_history_for_label_ids(
+    client: GmailClient, history_id: str, label_entries: list[tuple[str, str]]
+) -> Iterator[dict]:
+    """Merge ``history.list`` across labels (one ``labelId`` per call); dedupe by message id."""
+    seen: set[str] = set()
+    for _name, lid in label_entries:
         for stub in client.iter_history_message_stubs(
             start_history_id=history_id, label_id=lid
         ):
@@ -80,6 +96,14 @@ def _iter_history_for_labels(
             if mid and mid not in seen:
                 seen.add(mid)
                 yield stub
+
+
+def _iter_history_for_labels(
+    client: GmailClient, history_id: str, label_names: list[str]
+) -> Iterator[dict]:
+    """Merge history across configured labels (used by tests and thin wrappers)."""
+    entries = _gmail_history_label_entries(client, label_names)
+    yield from _iter_history_for_label_ids(client, history_id, entries)
 
 
 # ── Public entry points ────────────────────────────────────────────────────────
@@ -94,6 +118,18 @@ def _ingest_args_for_poll_tick(base: argparse.Namespace) -> argparse.Namespace:
         mail=bool(getattr(base, "mail", True)),
         unparsed=bool(getattr(base, "unparsed", False)),
         offline=bool(getattr(base, "offline", False)),
+        limit=None,
+    )
+
+
+def incremental_mail_ingest_tick_args() -> argparse.Namespace:
+    """Args for one incremental remote-mail ingest tick (same shape as a default ``poll`` tick).
+
+    The active provider is implementation-defined (Gmail today); this only selects the
+    ``--mail`` code path and default poll flags.
+    """
+    return _ingest_args_for_poll_tick(
+        argparse.Namespace(mail=True, unparsed=False, offline=False)
     )
 
 
@@ -102,8 +138,8 @@ def run_ingest(args: argparse.Namespace) -> None:
 
     Dispatches to one of three fetch modes based on CLI flags:
     - ``--poll``     → start ``run_poll`` with the same source flags (Gmail / unparsed / offline).
-    - ``--offline``  → re-process emails already stored in ``fetched_emails``.
-    - ``--unparsed`` → re-process the current ``unparsed_messages`` queue.
+    - ``--offline``  → re-process emails already stored in ``fetched_emails`` (optional ``--limit``).
+    - ``--unparsed`` → re-process the current ``unparsed_messages`` queue (optional ``--limit``).
     - (default)      → fetch from Gmail (incremental, ``--once``, or ``--force``).
     """
     if getattr(args, "poll", False):
@@ -114,11 +150,11 @@ def run_ingest(args: argparse.Namespace) -> None:
         if getattr(args, "only_mail_id", None):
             _ingest_one_from_fetched(db, str(getattr(args, "only_mail_id")))
         elif getattr(args, "offline", False):
-            _ingest_offline(db) # ingest from fetched_emails table
+            _ingest_offline(db, limit=getattr(args, "limit", None))
         elif getattr(args, "unparsed", False):
-            _ingest_from_unparsed(db) # ingest from unparsed_messages table
+            _ingest_from_unparsed(db, limit=getattr(args, "limit", None))
         else:
-            _ingest_from_gmail(db, args) # ingest from gmail
+            _ingest_from_gmail(db, args)
 
 
 def run_poll(base_args: Optional[argparse.Namespace] = None) -> None:
@@ -132,7 +168,7 @@ def run_poll(base_args: Optional[argparse.Namespace] = None) -> None:
 
     def _handler(sig, frame):  # noqa: ANN001
         nonlocal _stop
-        print("\nStopping poll daemon…", flush=True)
+        logger.info("Stopping poll daemon…")
         _stop = True
 
     signal.signal(signal.SIGTERM, _handler)
@@ -145,16 +181,19 @@ def run_poll(base_args: Optional[argparse.Namespace] = None) -> None:
     )
     tick = _ingest_args_for_poll_tick(base)
 
-    print(
-        f"Poll daemon started — interval: {settings.poll_seconds}s  "
-        f"(mail={tick.mail} unparsed={tick.unparsed} offline={tick.offline})"
+    logger.info(
+        "Poll daemon started — interval: %ss (mail=%s unparsed=%s offline=%s)",
+        settings.poll_seconds,
+        tick.mail,
+        tick.unparsed,
+        tick.offline,
     )
     while not _stop:
         try:
             run_ingest(tick)
         except GmailAuthError as exc:
-            print(f"Auth error: {exc}", file=sys.stderr)
-            sys.exit(1)
+            logger.error("Auth error: %s", exc)
+            raise
         except Exception as exc:  # noqa: BLE001
             logger.error("Ingest error during poll: %s", exc)
 
@@ -163,7 +202,7 @@ def run_poll(base_args: Optional[argparse.Namespace] = None) -> None:
                 break
             time.sleep(1)
 
-    print("Poll daemon stopped.")
+    logger.info("Poll daemon stopped.")
 
 
 def run_unparsed(args: argparse.Namespace) -> None:
@@ -191,17 +230,15 @@ def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> None:
     """
     try:
         client = GmailClient()
-    except GmailAuthError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        sys.exit(1)
+    except GmailAuthError:
+        logger.warning("Gmail client auth failed", exc_info=True)
+        raise
 
     once_n: Optional[int] = getattr(args, "once", None)
     force_arg: Optional[int] = getattr(args, "force", None)
 
     classifier = MessageClassifier(db)
-    classifier.load_rules()
     parser = TransactionParser(db)
-    parser.load_parsers()
     stats = dict(fetched=0, parsed=0, unparsed=0, skipped=0, duplicate=0)
 
     if once_n is not None:
@@ -215,13 +252,20 @@ def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> None:
         history_id = cursor.gmail_history_id if cursor else None
 
         if history_id:
-            try:
-                stubs_iter = _iter_history_for_labels(
-                    client, history_id, settings.gmail_labels
+            entries = _gmail_history_label_entries(client, settings.gmail_labels)
+            if not entries:
+                logger.warning(
+                    "No Gmail labels resolved for history sync — falling back to full fetch (lookback window)"
                 )
-            except HistoryExpiredError:
-                logger.warning("History ID expired — falling back to full fetch")
                 stubs_iter = _fetch_full(client)
+            else:
+                try:
+                    stubs_iter = _iter_history_for_label_ids(
+                        client, history_id, entries
+                    )
+                except HistoryExpiredError:
+                    logger.warning("History ID expired — falling back to full fetch")
+                    stubs_iter = _fetch_full(client)
         else:
             stubs_iter = _fetch_full(client)
 
@@ -235,12 +279,12 @@ def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> None:
             parser=parser,
             stats=stats,
         )
-        db.commit()
+        commit_with_retry(db)
 
     if once_n is None:
         _save_cursor(db, client)
 
-    _print_stats(stats)
+    _log_ingest_summary(stats)
 
 
 def _fetch_full(
@@ -255,9 +299,20 @@ def _fetch_full(
 
 # ── Offline / re-process modes ────────────────────────────────────────────────
 
-def _ingest_offline(db: Session) -> None:
-    """Re-classify and re-parse all emails already stored in fetched_emails."""
-    rows = db.query(FetchedEmail).order_by(FetchedEmail.internal_date_ms.asc()).all()
+def _ingest_offline(db: Session, limit: Optional[int] = None) -> None:
+    """Re-classify and re-parse emails already stored in fetched_emails.
+
+    ``limit`` (if positive) caps how many rows are processed, oldest first.
+    """
+    q = db.query(FetchedEmail).order_by(FetchedEmail.internal_date_ms.asc())
+    if limit is not None:
+        if limit <= 0:
+            _log_ingest_summary(
+                dict(fetched=0, parsed=0, unparsed=0, skipped=0, duplicate=0)
+            )
+            return
+        q = q.limit(limit)
+    rows = q.all()
     emails = [
         EmailContent(
             mail_id=r.mail_id,
@@ -272,7 +327,7 @@ def _ingest_offline(db: Session) -> None:
         for r in rows
     ]
     stats = _process_emails(emails, db)
-    _print_stats(stats)
+    _log_ingest_summary(stats)
 
 def reprocess_all_from_fetched(db: Session) -> dict:
     """Re-classify and re-parse all cached emails from ``fetched_emails`` (offline mode)."""
@@ -318,17 +373,28 @@ def _ingest_one_from_fetched(db: Session, mail_id: str) -> None:
     try:
         stats = reprocess_one_from_fetched(db, mail_id)
     except KeyError:
-        print(f"No fetched_emails row for mail_id {mail_id!r}", file=sys.stderr)
-        _print_stats(dict(fetched=0, parsed=0, unparsed=0, skipped=0, duplicate=0))
+        logger.error("No fetched_emails row for mail_id %r", mail_id)
+        _log_ingest_summary(dict(fetched=0, parsed=0, unparsed=0, skipped=0, duplicate=0))
         raise SystemExit(1)
-    _print_stats(stats)
+    _log_ingest_summary(stats)
 
 
-def _ingest_from_unparsed(db: Session) -> None:
-    """Re-classify and re-parse messages currently in the unparsed queue."""
-    rows = db.query(UnparsedMessage).order_by(UnparsedMessage.created_at.asc()).all()
+def _ingest_from_unparsed(db: Session, limit: Optional[int] = None) -> None:
+    """Re-classify and re-parse messages currently in the unparsed queue.
+
+    ``limit`` (if positive) caps how many queue rows are processed, oldest first.
+    """
+    q = db.query(UnparsedMessage).order_by(UnparsedMessage.created_at.asc())
+    if limit is not None:
+        if limit <= 0:
+            _log_ingest_summary(
+                dict(fetched=0, parsed=0, unparsed=0, skipped=0, duplicate=0)
+            )
+            return
+        q = q.limit(limit)
+    rows = q.all()
     if not rows:
-        _print_stats(dict(fetched=0, parsed=0, unparsed=0, skipped=0, duplicate=0))
+        _log_ingest_summary(dict(fetched=0, parsed=0, unparsed=0, skipped=0, duplicate=0))
         return
     fe_ids = [u.fetched_email_id for u in rows]
     fetched_map = {
@@ -358,7 +424,7 @@ def _ingest_from_unparsed(db: Session) -> None:
             )
         )
     stats = _process_emails(emails, db)
-    _print_stats(stats)
+    _log_ingest_summary(stats)
 
 
 # ── Core processing loop ───────────────────────────────────────────────────────
@@ -378,31 +444,51 @@ def _process_one_email(
     and then upserts ``fetched_email_enrichments`` for this processing pass.
     """
     stats["fetched"] += 1
+    if settings.log_level == "DEBUG":
+        logger.debug(
+            "Parsing mail mail_id=%s subject=%r sender=%r",
+            email.mail_id,
+            (email.subject or "")[:200],
+            (email.sender or "")[:120],
+        )
+    else:
+        logger.info("Parsing mail mail_id=%s", email.mail_id)
 
-    insert_fetched_email_raw(db, email)
-    assert email.fetched_email_id is not None
-    reset_fetched_email_enrichment(db, email.fetched_email_id)
+    t0 = time.perf_counter()
+    completed = False
+    try:
+        classifier.load_rules()
+        parser.load_parsers()
+        insert_fetched_email_raw(db, email)
+        assert email.fetched_email_id is not None
+        reset_fetched_email_enrichment(db, email.fetched_email_id)
 
-    result = classifier.classify(
-        email.sender, email.subject, email.body_text, email.snippet
-    )
+        result = classifier.classify(
+            email.sender, email.subject, email.body_text, email.snippet
+        )
 
-    set_email_classification(
-        db,
-        email.fetched_email_id,
-        result.message_type,
-        classification_id=result.classification_id,
-        classification_reason=result.classification_reason,
-    )
+        set_email_classification(
+            db,
+            email.fetched_email_id,
+            result.message_type,
+            classification_id=result.classification_id,
+            classification_reason=result.classification_reason,
+        )
 
-    ctx = HandlerContext(
-        db=db,
-        email=email,
-        result=result,
-        parser=parser,
-        stats=stats,
-    )
-    dispatch(ctx)
+        ctx = HandlerContext(
+            db=db,
+            email=email,
+            result=result,
+            parser=parser,
+            stats=stats,
+        )
+        dispatch(ctx)
+        completed = True
+    finally:
+        fe_id = getattr(email, "fetched_email_id", None)
+        if fe_id is not None and completed:
+            elapsed_ms = max(0, int(round((time.perf_counter() - t0) * 1000)))
+            set_enrichment_processing_time_ms(db, fe_id, elapsed_ms)
 
 
 def _process_emails(
@@ -415,13 +501,12 @@ def _process_emails(
     classify and run the registered handler (transaction parse, sink, unparsed, …).
     """
     classifier = MessageClassifier(db)
-    classifier.load_rules()
     parser = TransactionParser(db)
-    parser.load_parsers()
 
     stats = dict(fetched=0, parsed=0, unparsed=0, skipped=0, duplicate=0)
 
-    for email in emails:
+    total = len(emails)
+    for i, email in enumerate(emails, start=1):
         _process_one_email(
             email=email,
             db=db,
@@ -429,8 +514,10 @@ def _process_emails(
             parser=parser,
             stats=stats,
         )
+        commit_with_retry(db)
+        if total > 100 and i % 200 == 0:
+            logger.info("Batch ingest progress: %d / %d messages", i, total)
 
-    db.commit()
     return stats
 
 
@@ -450,25 +537,26 @@ def _save_cursor(db: Session, client: GmailClient) -> None:
             gmail_history_id=history_id,
             last_run_at=datetime.now(tz=timezone.utc),
         ))
-    db.commit()
+    commit_with_retry(db)
     logger.debug("Saved ingest cursor historyId=%s", history_id)
 
 
 # ── Display helpers ───────────────────────────────────────────────────────────
 
-def _print_stats(stats: dict) -> None:
-    """Print a one-line ingestion summary to stdout."""
-    print(
-        f"Done — fetched: {stats['fetched']}  "
-        f"parsed: {stats['parsed']}  "
-        f"unparsed: {stats['unparsed']}  "
-        f"skipped: {stats['skipped']}  "
-        f"duplicate: {stats['duplicate']}"
+def _log_ingest_summary(stats: dict) -> None:
+    """Log a one-line ingestion summary (CLI / scheduled ingest)."""
+    logger.info(
+        "Done — fetched: %s  parsed: %s  unparsed: %s  skipped: %s  duplicate: %s",
+        stats["fetched"],
+        stats["parsed"],
+        stats["unparsed"],
+        stats["skipped"],
+        stats["duplicate"],
     )
 
 
 def _list_unparsed(db: Session) -> None:
-    """Print the 50 most recent unparsed messages to stdout in tabular form."""
+    """Log the 50 most recent unparsed messages in tabular form."""
     rows = (
         db.query(UnparsedMessage)
         .order_by(UnparsedMessage.created_at.desc())
@@ -476,10 +564,10 @@ def _list_unparsed(db: Session) -> None:
         .all()
     )
     if not rows:
-        print("No unparsed messages.")
+        logger.info("No unparsed messages.")
         return
-    print(f"{'ID':<6}  {'Mail ID':<24}  {'Reason':<40}  {'Created'}")
-    print("-" * 90)
+    logger.info(f"{'ID':<6}  {'Mail ID':<24}  {'Reason':<40}  {'Created'}")
+    logger.info("-" * 90)
     fe_ids = [r.fetched_email_id for r in rows]
     fe_map = {
         f.id: f.mail_id
@@ -488,16 +576,16 @@ def _list_unparsed(db: Session) -> None:
     for r in rows:
         created = r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else ""
         mid = fe_map.get(r.fetched_email_id, "?")
-        print(f"{r.id:<6}  {mid:<24}  {(r.reason or ''):<40}  {created}")
+        logger.info("%s", f"{r.id:<6}  {mid:<24}  {(r.reason or ''):<40}  {created}")
 
 
 def _show_unparsed(db: Session, mail_id: str) -> None:
-    """Print full details for a single unparsed message, including its raw body (first 2000 chars)."""
+    """Log full details for a single unparsed message, including its raw body (first 2000 chars)."""
     fe = db.execute(
         select(FetchedEmail).where(FetchedEmail.mail_id == mail_id)
     ).scalar_one_or_none()
     if fe is None:
-        print(f"No fetched email with mail_id {mail_id!r}")
+        logger.info("No fetched email with mail_id %r", mail_id)
         return
     row = (
         db.query(UnparsedMessage)
@@ -505,17 +593,15 @@ def _show_unparsed(db: Session, mail_id: str) -> None:
         .first()
     )
     if not row:
-        print(f"No unparsed message for mail_id {mail_id!r}")
+        logger.info("No unparsed message for mail_id %r", mail_id)
         return
 
-    print(f"Mail ID    : {fe.mail_id}")
-    print(f"Reason     : {row.reason}")
-    print(f"Classifier : {row.classification_id}")
-    print(f"Parser     : {row.parser_id}")
-    print(f"Created    : {row.created_at}")
-    print(f"Sender     : {fe.sender}")
-    print(f"Subject    : {fe.subject}")
-    print(f"Snippet    : {fe.snippet}")
-    print()
-    print("Body:")
-    print((fe.body_text or "")[:2000])
+    logger.info("Mail ID    : %s", fe.mail_id)
+    logger.info("Reason     : %s", row.reason)
+    logger.info("Classifier : %s", row.classification_id)
+    logger.info("Parser     : %s", row.parser_id)
+    logger.info("Created    : %s", row.created_at)
+    logger.info("Sender     : %s", fe.sender)
+    logger.info("Subject    : %s", fe.subject)
+    logger.info("Snippet    : %s", fe.snippet)
+    logger.info("Body:\n%s", (fe.body_text or "")[:2000])

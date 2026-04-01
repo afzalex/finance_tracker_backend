@@ -70,8 +70,22 @@ def test_ingest_args_for_poll_tick_strips_run_modes() -> None:
     assert tick.mail is False
     assert tick.unparsed is True
     assert tick.offline is False
+    assert getattr(tick, "limit", None) is None
 
 
 def test_ingest_only_mail_id_parses() -> None:
     args = build_parser().parse_args(["ingest", "--only-mail-id", "abc123"])
     assert args.only_mail_id == "abc123"
+
+
+def test_ingest_limit_parses_for_offline() -> None:
+    args = build_parser().parse_args(["ingest", "--offline", "--limit", "5"])
+    assert args.offline is True
+    assert args.limit == 5
+
+
+def test_poll_limit_parses() -> None:
+    args = build_parser().parse_args(["poll", "--offline", "--limit", "10"])
+    assert args.command == "poll"
+    assert args.offline is True
+    assert args.limit == 10

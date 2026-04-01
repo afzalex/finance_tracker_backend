@@ -77,3 +77,17 @@ def test_reset_fetched_email_enrichment_inserts_then_clears_fields(db) -> None:
     assert row.classification is None
     assert row.classification_reason is None
     assert row.parser_id is None
+    assert row.processing_time_ms is None
+
+
+def test_reset_fetched_email_enrichment_clears_processing_time_ms(db) -> None:
+    fe = _seed_fetched_email(db)
+    reset_fetched_email_enrichment(db, fe.id)
+    row = get_or_create_fetched_email_enrichment(db, fe.id)
+    row.processing_time_ms = 99
+    db.commit()
+    reset_fetched_email_enrichment(db, fe.id)
+    db.commit()
+    again = db.get(FetchedEmailEnrichment, fe.id)
+    assert again is not None
+    assert again.processing_time_ms is None

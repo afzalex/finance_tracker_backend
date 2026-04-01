@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import os
+
+# Before any ``backend.config`` import: avoid background scheduled mail ingest during API tests.
+os.environ["API_SCHEDULED_INGEST_ENABLED"] = "false"
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker

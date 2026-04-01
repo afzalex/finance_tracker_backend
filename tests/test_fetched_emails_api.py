@@ -42,6 +42,7 @@ def test_get_fetched_email_with_enrichment_returns_nested_payload(db) -> None:
             classification="TRANSACTION_ALERT",
             classification_reason="Test rule",
             parser_id=pr.id,
+            processing_time_ms=42,
         )
     )
     db.commit()
@@ -64,6 +65,7 @@ def test_get_fetched_email_with_enrichment_returns_nested_payload(db) -> None:
     assert data["enrichment"]["parser_id"] == pr.id
     assert data["enrichment"]["classification_name"] == "HDFC debit rule"
     assert data["enrichment"]["parser_name"] == "HDFC body parser"
+    assert data["enrichment"]["processing_time_ms"] == 42
 
 
 def test_get_fetched_email_without_enrichment(db) -> None:

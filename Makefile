@@ -31,12 +31,12 @@ help:
 	@echo "  make install              Create .venv if missing; pip install deps + editable package"
 	@echo "  make test                 Run pytest"
 	@echo "  make coverage             Run pytest with coverage for the backend package (htmlcov/)"
-	@echo "  make api                  Run FastAPI (http://0.0.0.0:8000)"
+	@echo "  make api                  Run FastAPI (uvicorn, reload)"
 	@echo "  make openapi              Export OpenAPI to openapi.json"
 	@echo "  make gen-client [OUT=…]   Generate TS Axios client (default OUT=$(OUT); needs Node npx; frontend needs axios)"
 	@echo "  make ingest [ARGS=…]      Run CLI ingest (default incremental Gmail; pass ARGS for --once, --offline, …)"
 	@echo "  make migrate              alembic upgrade head"
-	@echo "  make shell                PYTHONPATH set; print venv python path"
+	@echo "  make shell                Show PYTHONPATH and venv python path"
 
 $(PYTHON):
 	@test -d "$(VENV)" || (command -v python3 >/dev/null 2>&1 && python3 -m venv "$(VENV)" || python -m venv "$(VENV)")

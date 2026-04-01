@@ -104,6 +104,7 @@ def _enrichment_detail(
         classification=enrichment.classification,
         classification_reason=enrichment.classification_reason,
         parser_id=enrichment.parser_id,
+        processing_time_ms=enrichment.processing_time_ms,
         created_at=enrichment.created_at,
         updated_at=enrichment.updated_at,
         classification_name=c_name,

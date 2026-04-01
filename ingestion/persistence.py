@@ -13,6 +13,7 @@ from backend.app.models.fetched_email import FetchedEmail
 from backend.app.models.fetched_email_enrichment import FetchedEmailEnrichment
 from backend.app.models.transaction import Transaction
 from backend.app.models.unparsed_message import UnparsedMessage
+from backend.database import flush_with_retry
 from backend.ingestion.extraction import EmailContent
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ def insert_fetched_email_raw(db: Session, email: EmailContent) -> None:
         body_text=email.body_text,
     )
     db.add(row)
-    db.flush()
+    flush_with_retry(db)
     email.fetched_email_id = row.id
 
 
@@ -64,7 +65,16 @@ def reset_fetched_email_enrichment(db: Session, fetched_email_id: int) -> None:
     row.classification = None
     row.classification_reason = None
     row.parser_id = None
-    db.flush()
+    row.processing_time_ms = None
+    flush_with_retry(db)
+
+
+def set_enrichment_processing_time_ms(
+    db: Session, fetched_email_id: int, elapsed_ms: int
+) -> None:
+    """Record how long the last processing pass took (persisted on the next ``commit``)."""
+    row = get_or_create_fetched_email_enrichment(db, fetched_email_id)
+    row.processing_time_ms = max(0, elapsed_ms)
 
 
 def set_email_classification(
@@ -198,7 +208,7 @@ def upsert_transaction(db: Session, fields: dict) -> str:
     try:
         with db.begin_nested():
             db.add(txn)
-            db.flush()
+            flush_with_retry(db)
     except IntegrityError:
         return "duplicate"
     return "inserted"

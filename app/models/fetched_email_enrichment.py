@@ -28,6 +28,11 @@ class FetchedEmailEnrichment(Base):
     classification: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     classification_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     parser_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    processing_time_ms: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="Milliseconds for last classify+parse pass on this mail.",
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,

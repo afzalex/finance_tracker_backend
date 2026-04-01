@@ -1,5 +1,6 @@
 """Integration tests for the ingest pipeline (_process_emails)."""
 
+import argparse
 from typing import Optional
 
 from sqlalchemy import select
@@ -11,7 +12,11 @@ from backend.app.models.transaction import Transaction
 from backend.app.models.unparsed_message import UnparsedMessage
 from backend.ingestion.extraction import EmailContent
 from backend.ingestion.classifier import CLASSIFICATION_NO_MATCH_REASON
-from backend.ingestion.pipeline import _process_emails
+from backend.ingestion.pipeline import (
+    _ingest_args_for_poll_tick,
+    _process_emails,
+    incremental_mail_ingest_tick_args,
+)
 from tests.conftest import seed_classification, seed_parser
 
 _TS_MS = 1_709_251_200_000  # 2024-03-01 00:00:00 UTC
@@ -125,6 +130,8 @@ def test_fetched_email_classification_is_set(db: Session) -> None:
     assert row.classification == "TRANSACTION_ALERT"
     assert row.classification_id == classification.id
     assert row.classification_reason == "Test rule"
+    assert row.processing_time_ms is not None
+    assert row.processing_time_ms >= 0
 
 
 # ── SINK ──────────────────────────────────────────────────────────────────────
@@ -463,3 +470,11 @@ def test_successful_reparse_removes_from_unparsed(db: Session) -> None:
     assert enr.classification_id == classification.id
     assert enr.classification_reason == "Test rule"
     assert enr.parser_id == parser.id
+
+
+def test_incremental_mail_ingest_tick_args_matches_poll_default() -> None:
+    base = argparse.Namespace(mail=True, unparsed=False, offline=False)
+    assert (
+        incremental_mail_ingest_tick_args().__dict__
+        == _ingest_args_for_poll_tick(base).__dict__
+    )

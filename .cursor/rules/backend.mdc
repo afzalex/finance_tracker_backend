@@ -11,3 +11,8 @@ The **repository root for this backend** is the directory that contains this fil
 - Treat **`backend/`** as the project root for commands (`make test`, `make coverage`, `make api`), not a parent path like `../` as “the project.”
 - Paths such as **`../frontend/...`** are intentional when the monorepo has a **sibling** `frontend` next to `backend`; they are relative to **`backend/`**, not “escape upward from the wrong folder.”
 - Python imports use the package name **`backend`** (e.g. `backend.app.main`); `PYTHONPATH` must include the **parent** of the `backend` package directory so `import backend` works (see `Makefile` `export PYTHONPATH` and `pip install -e .`).
+
+## Mail ingestion
+
+- Treat **mail ingestion** as **provider-agnostic** in public surfaces: CLI help, API docs, scheduled lifespan, and names like `incremental_mail_ingest_tick_args`, `MailProviderAuthError`, task `scheduled_mail_ingest`.
+- **`ingestion/gmail/`** is the **current** remote provider implementation; additional providers should live alongside it (e.g. `ingestion/outlook/`) and share **`ingestion/mail/`** for cross-provider types (e.g. `MailProviderAuthError`).

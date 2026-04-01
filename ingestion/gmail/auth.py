@@ -16,6 +16,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
 from backend.config import settings
+from backend.ingestion.mail.errors import MailProviderAuthError
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
 
-class GmailAuthError(Exception):
+class GmailAuthError(MailProviderAuthError):
     """Raised when Gmail authentication fails and user action is required."""
 
 
@@ -110,7 +111,7 @@ def run_oauth_flow() -> None:
     flow = InstalledAppFlow.from_client_secrets_file(credentials_file, scopes=SCOPES)
     creds = flow.run_local_server(port=0)
     _save_credentials(creds, token_file)
-    print(f"Gmail authentication complete. Token saved to {token_file}")
+    logger.info("Gmail authentication complete. Token saved to %s", token_file)
 
 
 def _save_credentials(creds: Credentials, token_file: str) -> None:

@@ -24,6 +24,21 @@ from sqlalchemy.orm import Session
 from backend.app.models.classification import Classification
 from backend.ingestion.utils import match_regex, merge_extract_groups
 
+
+@dataclass(frozen=True, slots=True)
+class ClassificationRuleSnapshot:
+    """In-memory copy of a rule row — no ORM lazy loads during ``classify``."""
+
+    id: int
+    name: str
+    message_type: str
+    sender_match_regex: Optional[str]
+    subject_match_regex: Optional[str]
+    body_match_regex: Optional[str]
+    subject_extract_regex: Optional[str]
+    body_extract_regex: Optional[str]
+    snippet_extract_regex: Optional[str]
+
 logger = logging.getLogger(__name__)
 
 # Stored in ``fetched_email_enrichments.classification_reason`` when no rule matches.
@@ -55,16 +70,30 @@ class MessageClassifier:
 
     def __init__(self, db: Session) -> None:
         self.db = db
-        self._rules: list[Classification] = []
+        self._rules: list[ClassificationRuleSnapshot] = []
 
     def load_rules(self) -> None:
         """Load active classification rules from DB in descending priority order."""
-        self._rules = (
+        rows = (
             self.db.query(Classification)
             .filter(Classification.is_active.is_(True))
             .order_by(Classification.priority.desc())
             .all()
         )
+        self._rules = [
+            ClassificationRuleSnapshot(
+                id=r.id,
+                name=r.name,
+                message_type=r.message_type.value,
+                sender_match_regex=r.sender_match_regex,
+                subject_match_regex=r.subject_match_regex,
+                body_match_regex=r.body_match_regex,
+                subject_extract_regex=r.subject_extract_regex,
+                body_extract_regex=r.body_extract_regex,
+                snippet_extract_regex=r.snippet_extract_regex,
+            )
+            for r in rows
+        ]
         logger.debug("Loaded %d classification rules", len(self._rules))
 
     def classify(self, sender: str, subject: str, body: str, snippet: str = "") -> ClassificationResult:
@@ -90,7 +119,7 @@ class MessageClassifier:
             if any(r is False for r in results):
                 continue
 
-            message_type = rule.message_type.value
+            message_type = rule.message_type
             extracted: dict = {}
 
             # Run optional extract regexes to pull named groups
