@@ -248,6 +248,7 @@ npm i axios
 | `DELETE` | `/api/v1/parsers/{id}` | Soft deactivate (`is_active` → false; row kept) |
 | `GET` | `/api/v1/emails/unparsed` | Unparsed queue (`mail_id`, reason, rule names) |
 | `GET` | `/api/v1/emails/{mail_id}` | Cached raw email + enrichment by provider message id (`fetched_emails.mail_id`) |
+| `POST` | `/api/v1/emails/reprocess` | Re-process all cached emails (offline; no Gmail fetch) |
 | `GET` | `/api/v1/accounts` | All known accounts / cards / wallets |
 | `GET` | `/api/v1/stats` | Monthly debit / credit / net totals |
 | `GET` | `/api/v1/analytics/cashflow` | Monthly income vs expense over N months |

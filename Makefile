@@ -23,7 +23,7 @@ OUT ?= ../frontend/src/api
 VENV         := $(MAKEFILE_DIR)/.venv
 PYTHON       := $(VENV)/bin/python
 PIP          := $(VENV)/bin/pip
-.PHONY: help install test coverage api openapi gen-client ingest migrate shell
+.PHONY: help install test coverage api api-noreload openapi gen-client ingest migrate shell
 
 help:
 	@echo "Finance Tracker backend — common commands"
@@ -59,6 +59,9 @@ coverage: $(PYTHON)
 
 api: $(PYTHON)
 	@"$(PYTHON)" -m uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
+
+api-noreload: $(PYTHON)
+	@"$(PYTHON)" -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
 
 openapi: $(PYTHON)
 	@"$(PYTHON)" "$(MAKEFILE_DIR)/scripts/export_openapi.py" "$(MAKEFILE_DIR)/openapi.json"

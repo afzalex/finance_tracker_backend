@@ -274,13 +274,32 @@ def _ingest_offline(db: Session) -> None:
     stats = _process_emails(emails, db)
     _print_stats(stats)
 
-def _ingest_one_from_fetched(db: Session, mail_id: str) -> None:
-    """Re-classify and re-parse one stored fetched email by provider ``mail_id``."""
+def reprocess_all_from_fetched(db: Session) -> dict:
+    """Re-classify and re-parse all cached emails from ``fetched_emails`` (offline mode)."""
+    rows = db.query(FetchedEmail).order_by(FetchedEmail.internal_date_ms.asc()).all()
+    emails = [
+        EmailContent(
+            mail_id=r.mail_id,
+            thread_id=r.thread_id or "",
+            subject=r.subject or "",
+            sender=r.sender or "",
+            snippet=r.snippet or "",
+            internal_date_ms=r.internal_date_ms,
+            body_text=r.body_text or "",
+            fetched_email_id=r.id,
+        )
+        for r in rows
+    ]
+    return _process_emails(emails, db)
+
+def reprocess_one_from_fetched(db: Session, mail_id: str) -> dict:
+    """Re-classify and re-parse one stored fetched email by provider ``mail_id``.
+
+    Returns the same stats dict produced by ``_process_emails``.
+    """
     row = db.query(FetchedEmail).filter(FetchedEmail.mail_id == mail_id).one_or_none()
     if row is None:
-        print(f"No fetched_emails row for mail_id {mail_id!r}", file=sys.stderr)
-        _print_stats(dict(fetched=0, parsed=0, unparsed=0, skipped=0, duplicate=0))
-        raise SystemExit(1)
+        raise KeyError(mail_id)
     email = EmailContent(
         mail_id=row.mail_id,
         thread_id=row.thread_id or "",
@@ -291,7 +310,17 @@ def _ingest_one_from_fetched(db: Session, mail_id: str) -> None:
         body_text=row.body_text or "",
         fetched_email_id=row.id,
     )
-    stats = _process_emails([email], db)
+    return _process_emails([email], db)
+
+
+def _ingest_one_from_fetched(db: Session, mail_id: str) -> None:
+    """CLI wrapper: re-process one cached email and print stats; exit 1 if missing."""
+    try:
+        stats = reprocess_one_from_fetched(db, mail_id)
+    except KeyError:
+        print(f"No fetched_emails row for mail_id {mail_id!r}", file=sys.stderr)
+        _print_stats(dict(fetched=0, parsed=0, unparsed=0, skipped=0, duplicate=0))
+        raise SystemExit(1)
     _print_stats(stats)
 
 
