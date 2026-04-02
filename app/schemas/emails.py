@@ -45,22 +45,40 @@ class FetchedEmailRead(BaseModel):
 
 
 class FetchedEmailWithEnrichmentResponse(FetchedEmailRead):
-    """Cached email row with optional nested enrichment (``GET /emails/{mail_id}`` or ``GET /emails/by-id/{id}``)."""
+    """``GET /api/v1/emails/{mail_id}`` — cached email row with optional nested enrichment."""
 
     enrichment: Optional[FetchedEmailEnrichmentDetailRead] = None
 
 
 class UnparsedEmailListItem(BaseModel):
-    """One entry in ``GET /api/v1/emails/unparsed`` — unparsed queue row plus ``mail_id`` / preview."""
+    """One entry in ``GET /api/v1/emails/unparsed`` — queue row, ``mail_id`` / subject, and enrichment summary.
+
+    ``classification_reason`` comes from ``fetched_email_enrichments`` when present. Body and snippet are omitted.
+    """
 
     id: int
     fetched_email_id: int
     mail_id: str
     subject: Optional[str] = None
-    snippet: Optional[str] = None
+    mail_received_at: Optional[datetime] = None
+    classification_reason: Optional[str] = None
     reason: Optional[str] = None
     classification_id: Optional[int] = None
     parser_id: Optional[int] = None
     classification_name: Optional[str] = None
     parser_name: Optional[str] = None
     created_at: datetime
+
+
+class UnparsedEmailDetailRead(BaseModel):
+    """``GET /api/v1/emails/unparsed/{id}`` — unparsed queue metadata plus full cached email and enrichment."""
+
+    id: int
+    reason: Optional[str] = None
+    classification_id: Optional[int] = None
+    parser_id: Optional[int] = None
+    classification_name: Optional[str] = None
+    parser_name: Optional[str] = None
+    created_at: datetime
+    email: FetchedEmailRead
+    enrichment: Optional[FetchedEmailEnrichmentDetailRead] = None

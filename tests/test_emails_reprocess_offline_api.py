@@ -21,7 +21,7 @@ def _client_with_db(db):
 def test_reprocess_offline_empty(db) -> None:
     client, app = _client_with_db(db)
     try:
-        r = client.post("/api/v1/emails/reprocess?wait=true")
+        r = client.post("/api/v1/admin/emails/reprocess?wait=true")
     finally:
         app.dependency_overrides.clear()
     assert r.status_code == 200
@@ -65,7 +65,7 @@ def test_reprocess_offline_processes_all_cached_emails(db) -> None:
 
     client, app = _client_with_db(db)
     try:
-        r = client.post("/api/v1/emails/reprocess?wait=true")
+        r = client.post("/api/v1/admin/emails/reprocess?wait=true")
     finally:
         app.dependency_overrides.clear()
 

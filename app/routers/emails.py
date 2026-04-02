@@ -7,13 +7,8 @@ surrogate ``FetchedEmail.id`` (the response includes ``id`` at the top level for
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import logging
-import subprocess
-import sys
-from threading import Thread
-from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -26,65 +21,13 @@ from backend.app.schemas import (
     FetchedEmailEnrichmentDetailRead,
     FetchedEmailRead,
     FetchedEmailWithEnrichmentResponse,
+    UnparsedEmailDetailRead,
     UnparsedEmailListItem,
 )
 from backend.database import get_db
-from backend.ingestion.pipeline import reprocess_all_from_fetched, reprocess_one_from_fetched
+from backend.ingestion.pipeline import reprocess_one_from_fetched
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
-
-_REPROCESS_JOBS: dict[str, dict] = {}
-_REPROCESS_PROCS: dict[str, subprocess.Popen] = {}
-
-_ACTIVE_STATUSES = {"queued", "running"}
-
-
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _active_reprocess_job_id() -> str | None:
-    # Keep it simple: single in-memory coordinator per process.
-    # This is enough for local dev and single-worker deployments.
-    for job_id, job in _REPROCESS_JOBS.items():
-        if job.get("status") in _ACTIVE_STATUSES:
-            return job_id
-    return None
-
-
-def _monitor_reprocess_proc(job_id: str) -> None:
-    proc = _REPROCESS_PROCS.get(job_id)
-    if proc is None:
-        return
-    rc = proc.wait()
-    if rc == 0:
-        _REPROCESS_JOBS[job_id] = {
-            "status": "completed",
-            "started_at": _REPROCESS_JOBS.get(job_id, {}).get("started_at"),
-            "completed_at": _utc_now_iso(),
-        }
-        logger.info("emails.reprocess_all job completed", extra={"job_id": job_id})
-    else:
-        _REPROCESS_JOBS[job_id] = {
-            "status": "failed",
-            "started_at": _REPROCESS_JOBS.get(job_id, {}).get("started_at"),
-            "completed_at": _utc_now_iso(),
-            "error": f"exit_code={rc}",
-        }
-        logger.error("emails.reprocess_all job failed", extra={"job_id": job_id, "exit_code": rc})
-    _REPROCESS_PROCS.pop(job_id, None)
-
-
-@router.get(
-    "/reprocess/{job_id}",
-    summary="Get status for a bulk offline reprocess job",
-)
-async def get_reprocess_job(job_id: str = Path(..., min_length=1)) -> dict:
-    job = _REPROCESS_JOBS.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
-    return {"job_id": job_id, **job}
 
 
 def _enrichment_detail(
@@ -110,6 +53,12 @@ def _enrichment_detail(
         classification_name=c_name,
         parser_name=p_name,
     )
+
+
+def _mail_received_at_utc(internal_date_ms: int) -> datetime | None:
+    if internal_date_ms <= 0:
+        return None
+    return datetime.fromtimestamp(internal_date_ms / 1000.0, tz=timezone.utc)
 
 
 def _rule_name(db: Session, classification_id: int | None, parser_id: int | None) -> tuple[str | None, str | None]:
@@ -151,15 +100,16 @@ async def get_email_by_surrogate_id(
     summary="List emails in the unparsed queue",
 )
 async def list_unparsed_emails(db: Session = Depends(get_db)) -> list[UnparsedEmailListItem]:
-    """Return unparsed queue rows with ``mail_id`` and subject/snippet from ``fetched_emails`` (newest first)."""
+    """Return unparsed rows with ``mail_id``, subject, ``mail_received_at`` (UTC from provider internal ms), and optional ``classification_reason`` from enrichment (newest first). Omits body and snippet."""
     stmt = (
-        select(UnparsedMessage, FetchedEmail)
+        select(UnparsedMessage, FetchedEmail, FetchedEmailEnrichment)
         .join(FetchedEmail, UnparsedMessage.fetched_email_id == FetchedEmail.id)
+        .outerjoin(FetchedEmailEnrichment, FetchedEmailEnrichment.fetched_email_id == FetchedEmail.id)
         .order_by(UnparsedMessage.created_at.desc(), UnparsedMessage.id.desc())
     )
     rows = db.execute(stmt).all()
     out: list[UnparsedEmailListItem] = []
-    for um, fe in rows:
+    for um, fe, enr in rows:
         c_name, p_name = _rule_name(db, um.classification_id, um.parser_id)
         out.append(
             UnparsedEmailListItem(
@@ -167,7 +117,8 @@ async def list_unparsed_emails(db: Session = Depends(get_db)) -> list[UnparsedEm
                 fetched_email_id=um.fetched_email_id,
                 mail_id=fe.mail_id,
                 subject=fe.subject,
-                snippet=fe.snippet,
+                mail_received_at=_mail_received_at_utc(fe.internal_date_ms),
+                classification_reason=enr.classification_reason if enr else None,
                 reason=um.reason,
                 classification_id=um.classification_id,
                 parser_id=um.parser_id,
@@ -177,6 +128,37 @@ async def list_unparsed_emails(db: Session = Depends(get_db)) -> list[UnparsedEm
             )
         )
     return out
+
+
+@router.get(
+    "/unparsed/{unparsed_message_id}",
+    response_model=UnparsedEmailDetailRead,
+    summary="Get one unparsed queue row with full cached email and enrichment",
+)
+async def get_unparsed_email_detail(
+    unparsed_message_id: int = Path(..., ge=1, description="Primary key of ``unparsed_messages``"),
+    db: Session = Depends(get_db),
+) -> UnparsedEmailDetailRead:
+    """Return queue metadata plus nested ``FetchedEmailRead`` and optional enrichment (same enrichment shape as ``GET /{mail_id}``)."""
+    um = db.get(UnparsedMessage, unparsed_message_id)
+    if um is None:
+        raise HTTPException(status_code=404, detail="Unparsed message not found")
+    fe = db.get(FetchedEmail, um.fetched_email_id)
+    if fe is None:
+        raise HTTPException(status_code=404, detail="Fetched email not found")
+    c_name, p_name = _rule_name(db, um.classification_id, um.parser_id)
+    enrichment = db.get(FetchedEmailEnrichment, fe.id)
+    return UnparsedEmailDetailRead(
+        id=um.id,
+        reason=um.reason,
+        classification_id=um.classification_id,
+        parser_id=um.parser_id,
+        classification_name=c_name,
+        parser_name=p_name,
+        created_at=um.created_at,
+        email=FetchedEmailRead.model_validate(fe),
+        enrichment=_enrichment_detail(db, enrichment) if enrichment else None,
+    )
 
 
 @router.post(
@@ -193,52 +175,6 @@ async def reprocess_email_by_mail_id(
     except KeyError:
         raise HTTPException(status_code=404, detail="Email not found") from None
     return {"mail_id": mail_id, "stats": stats}
-
-
-@router.post(
-    "/reprocess",
-    summary="Re-process all cached emails (offline)",
-)
-async def reprocess_all_emails_offline(
-    wait: bool = Query(
-        False,
-        description=(
-            "If true, run synchronously and return final stats (can take a long time). "
-            "If false (default), start a background job and return immediately."
-        ),
-    ),
-    db: Session = Depends(get_db),
-) -> dict:
-    """Re-run classification + parsing for all cached emails (no Gmail fetch)."""
-    if wait:
-        logger.info("emails.reprocess_all sync requested")
-        stats = reprocess_all_from_fetched(db)
-        return {"stats": stats}
-
-    active_job_id = _active_reprocess_job_id()
-    if active_job_id is not None:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "message": "A reprocess job is already running",
-                "job_id": active_job_id,
-            },
-        )
-
-    job_id = uuid4().hex
-    _REPROCESS_JOBS[job_id] = {"status": "running", "started_at": _utc_now_iso()}
-    logger.info("emails.reprocess_all queued", extra={"job_id": job_id})
-    # Run in a separate OS process so the API stays responsive.
-    # We delegate to the existing CLI offline ingest command.
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "backend.cli", "ingest", "--offline"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        close_fds=True,
-    )
-    _REPROCESS_PROCS[job_id] = proc
-    Thread(target=_monitor_reprocess_proc, args=(job_id,), daemon=True).start()
-    return {"job_id": job_id, "status": "running"}
 
 
 @router.get(

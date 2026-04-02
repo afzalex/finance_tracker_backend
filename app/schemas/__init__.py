@@ -27,6 +27,7 @@ from backend.app.schemas.emails import (
     FetchedEmailEnrichmentRead,
     FetchedEmailRead,
     FetchedEmailWithEnrichmentResponse,
+    UnparsedEmailDetailRead,
     UnparsedEmailListItem,
 )
 from backend.app.schemas.enums import (
@@ -71,5 +72,6 @@ __all__ = [
     "TransactionListResponse",
     "TransactionRead",
     "TransactionType",
+    "UnparsedEmailDetailRead",
     "UnparsedEmailListItem",
 ]

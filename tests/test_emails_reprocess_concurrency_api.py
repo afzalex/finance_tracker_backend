@@ -19,11 +19,11 @@ def _client_with_db(db):
 def test_reprocess_rejects_when_job_active(db) -> None:
     client, app = _client_with_db(db)
     try:
-        first = client.post("/api/v1/emails/reprocess")
+        first = client.post("/api/v1/admin/emails/reprocess")
         assert first.status_code == 200
         job_id = first.json()["job_id"]
 
-        second = client.post("/api/v1/emails/reprocess")
+        second = client.post("/api/v1/admin/emails/reprocess")
         assert second.status_code == 409
         assert second.json()["detail"]["job_id"] == job_id
     finally:
