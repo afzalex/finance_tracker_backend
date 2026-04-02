@@ -10,5 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ backend/
 COPY .env.example .env.example
 
-# Run Alembic migrations then start the API server
-CMD ["sh", "-c", "alembic upgrade head && uvicorn backend.app.main:app --host 0.0.0.0 --port 8000"]
+# Run alembic from backend/ (where alembic.ini lives); PYTHONPATH keeps 'import backend' working
+WORKDIR /app/backend
+ENV PYTHONPATH=/app
+CMD ["sh", "-c", "mkdir -p data && alembic upgrade head && uvicorn backend.app.main:app --host 0.0.0.0 --port 8000"]

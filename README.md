@@ -253,6 +253,7 @@ docker compose up --build
 
 The API is exposed on port `8000`. The SQLite database is persisted to `./data/finance.db` on the host.
 
+
 ---
 
 ## Project Structure
