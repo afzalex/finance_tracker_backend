@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import signal
 import time
 from datetime import datetime, timedelta, timezone
@@ -47,6 +48,54 @@ from backend.ingestion.persistence import (
 from backend.ingestion.parsers import TransactionParser
 
 logger = logging.getLogger(__name__)
+
+def _log_gmail_auth_issue(exc: GmailAuthError) -> None:
+    credentials_file = settings.gmail_credentials_file
+    token_file = settings.gmail_token_file
+
+    creds_exists = os.path.exists(credentials_file)
+    token_exists = os.path.exists(token_file)
+
+    if not creds_exists:
+        logger.error(
+            "Mail ingest error: missing Gmail OAuth credentials.\n"
+            "The application is not initialized for mail ingestion.\n"
+            "Required file: %s\n"
+            "Next steps:\n"
+            "- Download your OAuth client secret JSON from Google Cloud Console.\n"
+            "- Save it to the required path above.\n"
+            "- Then authenticate to create the token file via the app (or CLI).\n"
+            "Details: %s",
+            credentials_file,
+            exc,
+        )
+        return
+
+    if not token_exists:
+        logger.warning(
+            "Mail ingest warning: Gmail is not authenticated yet (token missing).\n"
+            "Credentials file found: %s\n"
+            "Missing token file: %s\n"
+            "Next steps (frontend-triggered OAuth flow):\n"
+            "- Start: POST /api/v1/admin/mail/gmail/token/start?redirect_uri=<callback>\n"
+            "- Finish: GET  /api/v1/admin/mail/gmail/token/callback?state=...&code=...\n"
+            "Details: %s",
+            credentials_file,
+            token_file,
+            "No valid Gmail token found.",
+        )
+        return
+
+    logger.warning(
+        "Mail ingest warning: Gmail authentication failed.\n"
+        "Credentials file: %s\n"
+        "Token file: %s\n"
+        "You may need to re-authenticate (regenerate token.json via OAuth).\n"
+        "Details: %s",
+        credentials_file,
+        token_file,
+        exc,
+    )
 
 
 def _gmail_label_term(name: str) -> str:
@@ -202,8 +251,7 @@ def run_poll(base_args: Optional[argparse.Namespace] = None) -> None:
         try:
             run_ingest(tick)
         except GmailAuthError as exc:
-            logger.error("Auth error: %s", exc)
-            raise
+            _log_gmail_auth_issue(exc)
         except Exception as exc:  # noqa: BLE001
             logger.error("Ingest error during poll: %s", exc)
 
@@ -242,8 +290,8 @@ def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> None:
     """
     try:
         client = GmailClient()
-    except GmailAuthError:
-        logger.warning("Gmail client auth failed", exc_info=True)
+    except GmailAuthError as exc:
+        _log_gmail_auth_issue(exc)
         raise
 
     once_n: Optional[int] = getattr(args, "once", None)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 import logging
 import subprocess
@@ -9,14 +10,18 @@ import sys
 from threading import Thread
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
+from google_auth_oauthlib.flow import Flow
 from sqlalchemy.orm import Session
 
+from backend.ingestion.gmail.auth import SCOPES
 from backend.database import get_db
 from backend.ingestion.pipeline import reprocess_all_from_fetched
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+_GMAIL_OAUTH_PENDING: dict[str, dict] = {}
 
 _REPROCESS_JOBS: dict[str, dict] = {}
 _REPROCESS_PROCS: dict[str, subprocess.Popen] = {}
@@ -111,3 +116,88 @@ async def reprocess_all_emails_offline(
     _REPROCESS_PROCS[job_id] = proc
     Thread(target=_monitor_reprocess_proc, args=(job_id,), daemon=True).start()
     return {"job_id": job_id, "status": "running"}
+
+
+@router.post(
+    "/mail/gmail/token/start",
+    summary="Start Gmail OAuth flow to create token.json",
+)
+async def start_gmail_oauth_token_flow(
+    request: Request,
+    redirect_uri: str | None = Query(
+        None,
+        description=(
+            "OAuth redirect URI registered in Google Cloud Console. "
+            "If omitted, defaults to this backend's callback URL."
+        ),
+        min_length=8,
+    ),
+) -> dict:
+    """Return an auth_url to open in a browser. Call the callback endpoint to finish and write token.json."""
+    from backend.config import settings  # local import to keep module import lightweight
+
+    credentials_file = settings.gmail_credentials_file
+    token_file = settings.gmail_token_file
+    if redirect_uri is None:
+        redirect_uri = (
+            str(request.base_url).rstrip("/")
+            + "/api/v1/admin/mail/gmail/token/callback"
+        )
+
+    if not os.path.exists(credentials_file):
+        raise HTTPException(status_code=409, detail=f"Missing credentials.json at {credentials_file!r}")
+    if os.path.exists(token_file):
+        raise HTTPException(status_code=409, detail=f"token.json already exists at {token_file!r}")
+
+    flow = Flow.from_client_secrets_file(credentials_file, scopes=SCOPES, redirect_uri=redirect_uri)
+    auth_url, state = flow.authorization_url(
+        access_type="offline",
+        include_granted_scopes="true",
+        prompt="consent",
+    )
+    # PKCE: google-auth-oauthlib generates a code_verifier internally.
+    # We must persist it across requests (state -> verifier) for fetch_token().
+    code_verifier = getattr(flow, "code_verifier", None)
+    _GMAIL_OAUTH_PENDING[state] = {
+        "redirect_uri": redirect_uri,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "code_verifier": code_verifier,
+    }
+    return {"auth_url": auth_url, "state": state}
+
+
+@router.get(
+    "/mail/gmail/token/callback",
+    summary="Finish Gmail OAuth flow and write token.json",
+)
+async def finish_gmail_oauth_token_flow(
+    state: str = Query(..., min_length=10),
+    code: str = Query(..., min_length=10),
+) -> dict:
+    """Exchange the OAuth code for tokens and persist token.json."""
+    from backend.config import settings  # local import to keep module import lightweight
+
+    pending = _GMAIL_OAUTH_PENDING.pop(state, None)
+    if pending is None:
+        raise HTTPException(status_code=400, detail="Unknown or expired OAuth state")
+
+    credentials_file = settings.gmail_credentials_file
+    token_file = settings.gmail_token_file
+    redirect_uri = pending["redirect_uri"]
+    code_verifier = pending.get("code_verifier")
+
+    if not os.path.exists(credentials_file):
+        raise HTTPException(status_code=409, detail=f"Missing credentials.json at {credentials_file!r}")
+
+    flow = Flow.from_client_secrets_file(credentials_file, scopes=SCOPES, redirect_uri=redirect_uri, state=state)
+    if code_verifier:
+        flow.code_verifier = code_verifier
+        flow.fetch_token(code=code, code_verifier=code_verifier)
+    else:
+        flow.fetch_token(code=code)
+    creds = flow.credentials
+    os.makedirs(os.path.dirname(os.path.abspath(token_file)), exist_ok=True)
+    with open(token_file, "w", encoding="utf-8") as f:
+        f.write(creds.to_json())
+
+    return {"status": "ok", "token_file": token_file}

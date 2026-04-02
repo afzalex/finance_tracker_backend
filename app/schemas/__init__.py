@@ -45,6 +45,7 @@ from backend.app.schemas.transactions import (
     TransactionListResponse,
     TransactionRead,
 )
+from backend.app.schemas.meta import AppMetadataRead
 
 __all__ = [
     "AccountRead",
@@ -76,4 +77,5 @@ __all__ = [
     "TransactionType",
     "UnparsedEmailDetailRead",
     "UnparsedEmailListItem",
+    "AppMetadataRead",
 ]

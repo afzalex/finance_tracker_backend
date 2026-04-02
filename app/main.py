@@ -11,6 +11,7 @@ from backend.config import settings
 from backend.app.exception_handlers import emails_request_validation_handler
 from backend.app.lifecycle import scheduled_ingest_lifespan
 from backend.app.logging_setup import ensure_backend_stderr_logging
+from backend.app.version import APP_VERSION
 from backend.app.routers import (
     accounts,
     admin,
@@ -20,6 +21,7 @@ from backend.app.routers import (
     emails,
     parsers,
     stats,
+    metadata,
     transactions,
 )
 
@@ -37,7 +39,7 @@ def create_app(*, serve_frontend: bool | None = None) -> FastAPI:
 
     app = FastAPI(
         title="Finance Tracker API",
-        version="2.0.0",
+        version=APP_VERSION,
         description=(
             "REST API for ledger reads, cached emails, and classifier/parser management. "
             "While the server runs, incremental mail ingest can run on the same interval as "
@@ -81,6 +83,7 @@ def create_app(*, serve_frontend: bool | None = None) -> FastAPI:
     app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["Analytics"])
     app.include_router(stats.router, prefix="/api/v1/stats", tags=["Stats"])
     app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
+    app.include_router(metadata.router, prefix="/api/v1", tags=["Metadata"])
 
     @app.get("/health", tags=["Health"])
     async def health() -> dict:

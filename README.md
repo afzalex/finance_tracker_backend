@@ -234,32 +234,12 @@ The generated client is Axios-based, so make sure your frontend has Axios instal
 npm i axios
 ```
 
-### Endpoints
+### API reference
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/api/v1/transactions` | Paginated, filterable transaction list |
-| `GET` | `/api/v1/transactions/distinct` | Unique providers, merchants, counterparties (`include_merchants_in_counterparties` optional) |
-| `GET` | `/api/v1/classifications` | Email classifier rules (priority order) |
-| `POST` | `/api/v1/classifications` | Create a classification rule |
-| `PATCH` | `/api/v1/classifications/{id}` | Partial update |
-| `DELETE` | `/api/v1/classifications/{id}` | Soft deactivate (`is_active` → false; row kept) |
-| `GET` | `/api/v1/parsers` | Transaction parser rules (priority order) |
-| `POST` | `/api/v1/parsers` | Create a parser rule |
-| `PATCH` | `/api/v1/parsers/{id}` | Partial update |
-| `DELETE` | `/api/v1/parsers/{id}` | Soft deactivate (`is_active` → false; row kept) |
-| `GET` | `/api/v1/emails/unparsed` | Unparsed queue (`mail_id`, reason, rule names) |
-| `GET` | `/api/v1/emails/{mail_id}` | Cached raw email + enrichment by provider message id (`fetched_emails.mail_id`) |
-| `POST` | `/api/v1/admin/emails/reprocess` | Re-process all cached emails (offline; no Gmail fetch); optional `?wait=true` |
-| `GET` | `/api/v1/admin/emails/reprocess/{job_id}` | Status for async bulk reprocess job |
-| `GET` | `/api/v1/accounts` | All known accounts / cards / wallets |
-| `GET` | `/api/v1/stats` | Monthly debit / credit / net totals |
-| `GET` | `/api/v1/analytics/cashflow` | Monthly income vs expense over N months |
-| `GET` | `/api/v1/analytics/category-breakdown` | Spend by category |
-| `GET` | `/api/v1/analytics/top-merchants` | Top merchants by total spend |
-| `GET` | `/api/v1/analytics/recurring` | Recurring transaction detection |
-| `GET` | `/api/v1/analytics/anomalies` | Unusual spend highlights |
-| `GET` | `/health` | Health check |
+The API surface is documented via OpenAPI:
+
+- Swagger UI: `/docs`
+- OpenAPI JSON: `/openapi.json`
 
 ---
 
