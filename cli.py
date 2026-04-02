@@ -142,6 +142,10 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s — %(message)s",
     )
 
+    from backend.database import log_database_url  # noqa: PLC0415
+
+    log_database_url()
+
     parser = build_parser()
     args = parser.parse_args()
 

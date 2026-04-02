@@ -6,8 +6,10 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from backend.config import settings
+from backend.database import log_database_url
 from backend.app.exception_handlers import emails_request_validation_handler
 from backend.app.lifecycle import scheduled_ingest_lifespan
 from backend.app.logging_setup import ensure_backend_stderr_logging
@@ -36,6 +38,7 @@ def create_app(*, serve_frontend: bool | None = None) -> FastAPI:
     for tests; when false, ``GET /`` is not registered.
     """
     ensure_backend_stderr_logging()
+    log_database_url()
 
     app = FastAPI(
         title="Finance Tracker API",
@@ -92,12 +95,22 @@ def create_app(*, serve_frontend: bool | None = None) -> FastAPI:
 
     _serve = settings.api_serve_frontend if serve_frontend is None else serve_frontend
     if _serve:
+        _public = Path(__file__).resolve().parents[1] / "public"
+        _assets = _public / "assets"
+        if _assets.exists():
+            app.mount("/assets", StaticFiles(directory=_assets), name="assets")
 
-        @app.get("/", include_in_schema=False)
-        async def index() -> FileResponse:
-            """Placeholder landing page for local dev (to be replaced by frontend)."""
-            index_path = Path(__file__).resolve().parents[1] / "index.html"
-            return FileResponse(index_path)
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def spa_fallback(full_path: str) -> FileResponse:
+            """Serve static files from public/ when they exist, otherwise index.html.
+
+            Handles root-level assets (favicon.svg, etc.) and supports SPA
+            client-side routing by falling back to index.html for unknown paths.
+            """
+            candidate = _public / full_path
+            if candidate.is_file():
+                return FileResponse(candidate)
+            return FileResponse(_public / "index.html")
 
     return app
 

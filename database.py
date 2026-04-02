@@ -14,8 +14,10 @@ Usage::
 
 from __future__ import annotations
 
+import logging
 import random
 import time
+from urllib.parse import urlparse, urlunparse
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.exc import OperationalError
@@ -23,6 +25,36 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from backend.config import settings
 from backend.log_levels import sqlalchemy_echo_from_log_level
+
+logger = logging.getLogger(__name__)
+
+
+def _redacted_database_url(url: str) -> str:
+    """Log-friendly database URL (password stripped for non-SQLite)."""
+    if url.startswith("sqlite"):
+        return url
+    try:
+        p = urlparse(url)
+        if not p.scheme or not p.netloc:
+            return url
+        if "@" in p.netloc:
+            userinfo, hostpart = p.netloc.rsplit("@", 1)
+            if ":" in userinfo:
+                user = userinfo.split(":", 1)[0]
+                netloc = f"{user}:***@{hostpart}"
+            else:
+                netloc = f"{userinfo}@{hostpart}"
+        else:
+            netloc = p.netloc
+        return urlunparse((p.scheme, netloc, p.path or "", "", "", ""))
+    except Exception:
+        return "<database_url redacted>"
+
+
+def log_database_url() -> None:
+    """Emit configured DB URL once logging is configured (see ``create_app`` / CLI)."""
+    logger.info("Database URL: %s", _redacted_database_url(settings.database_url))
+
 
 _SQLITE = settings.database_url.startswith("sqlite")
 
