@@ -283,7 +283,12 @@ def test_parse_failure_goes_to_unparsed(db: Session) -> None:
 
 def test_low_confidence_goes_to_unparsed(db: Session, monkeypatch) -> None:
     # Force confidence threshold to 100 so any parse fails the check
-    monkeypatch.setattr("backend.ingestion.pipeline.settings.confidence_threshold", 100)
+    from backend.ingestion.persistence import (
+        CONFIG_KEY_APP_INGEST_CONFIDENCE_THRESHOLD,
+        upsert_config_value,
+    )
+
+    upsert_config_value(db, CONFIG_KEY_APP_INGEST_CONFIDENCE_THRESHOLD, "100")
     classification, parser = _seed_alert_setup(db)
     stats = _process_emails([_email()], db)
 

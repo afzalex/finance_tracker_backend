@@ -21,6 +21,12 @@ def ensure_backend_stderr_logging() -> None:
         # Same visual shape as uvicorn default logs: ``INFO:     message…``
         from uvicorn.logging import DefaultFormatter
 
-        h.setFormatter(DefaultFormatter(fmt="%(levelprefix)s %(message)s", use_colors=None))
+        h.setFormatter(
+            DefaultFormatter(
+                fmt="%(levelprefix)s %(asctime)s %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+                use_colors=None,
+            )
+        )
         log.addHandler(h)
     log.setLevel(parse_log_level(settings.log_level or "INFO"))

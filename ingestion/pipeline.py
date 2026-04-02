@@ -20,7 +20,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.models.fetched_email import FetchedEmail
-from backend.app.models.ingest_cursor import IngestCursor
 from backend.app.models.unparsed_message import UnparsedMessage
 from backend.config import settings
 from backend.database import SessionLocal, commit_with_retry
@@ -31,10 +30,19 @@ from backend.ingestion.gmail.client import GmailClient, HistoryExpiredError
 from backend.ingestion.handlers import dispatch
 from backend.ingestion.handlers.context import HandlerContext
 from backend.ingestion.persistence import (
+    CONFIG_KEY_APP_MAIL_GMAIL_LABELS,
+    CONFIG_KEY_APP_MAIL_INITIAL_LOOKBACK_DAYS,
+    CONFIG_KEY_APP_MAIL_POLL_SECONDS,
+    CONFIG_KEY_INTERNAL_MAIL_GMAIL_HISTORY_ID,
+    CONFIG_KEY_INTERNAL_MAIL_INGEST_LAST_RUN_AT,
+    get_required_config_csv_list,
+    get_required_config_int,
+    get_config_value,
     insert_fetched_email_raw,
     reset_fetched_email_enrichment,
     set_email_classification,
     set_enrichment_processing_time_ms,
+    upsert_config_value,
 )
 from backend.ingestion.parsers import TransactionParser
 
@@ -181,9 +189,11 @@ def run_poll(base_args: Optional[argparse.Namespace] = None) -> None:
     )
     tick = _ingest_args_for_poll_tick(base)
 
+    with SessionLocal() as db:
+        poll_seconds = get_required_config_int(db, CONFIG_KEY_APP_MAIL_POLL_SECONDS, min_value=1)
     logger.info(
         "Poll daemon started — interval: %ss (mail=%s unparsed=%s offline=%s)",
-        settings.poll_seconds,
+        poll_seconds,
         tick.mail,
         tick.unparsed,
         tick.offline,
@@ -197,7 +207,9 @@ def run_poll(base_args: Optional[argparse.Namespace] = None) -> None:
         except Exception as exc:  # noqa: BLE001
             logger.error("Ingest error during poll: %s", exc)
 
-        for _ in range(settings.poll_seconds):
+        with SessionLocal() as db:
+            poll_seconds = get_required_config_int(db, CONFIG_KEY_APP_MAIL_POLL_SECONDS, min_value=1)
+        for _ in range(poll_seconds):
             if _stop:
                 break
             time.sleep(1)
@@ -237,22 +249,25 @@ def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> None:
     once_n: Optional[int] = getattr(args, "once", None)
     force_arg: Optional[int] = getattr(args, "force", None)
 
+    label_names = get_required_config_csv_list(db, CONFIG_KEY_APP_MAIL_GMAIL_LABELS)
+
     classifier = MessageClassifier(db)
     parser = TransactionParser(db)
+    classifier.load_rules()
+    parser.load_parsers()
     stats = dict(fetched=0, parsed=0, unparsed=0, skipped=0, duplicate=0)
 
     if once_n is not None:
-        query = _gmail_label_query(settings.gmail_labels)
+        query = _gmail_label_query(label_names)
         stubs_iter = client.iter_message_stubs(query=query, max_results=once_n)
     elif force_arg is not None:
         max_in_window = None if force_arg < 0 else force_arg
         stubs_iter = _fetch_full(client, max_results=max_in_window)
     else:
-        cursor = db.query(IngestCursor).first()
-        history_id = cursor.gmail_history_id if cursor else None
+        history_id = get_config_value(db, CONFIG_KEY_INTERNAL_MAIL_GMAIL_HISTORY_ID)
 
         if history_id:
-            entries = _gmail_history_label_entries(client, settings.gmail_labels)
+            entries = _gmail_history_label_entries(client, label_names)
             if not entries:
                 logger.warning(
                     "No Gmail labels resolved for history sync — falling back to full fetch (lookback window)"
@@ -291,8 +306,13 @@ def _fetch_full(
     client: GmailClient, *, max_results: Optional[int] = None
 ) -> Iterator[dict]:
     """Build a lookback query and stream message stubs (newest first within the API order)."""
-    cutoff = datetime.now(tz=timezone.utc) - timedelta(days=settings.initial_lookback_days)
-    label_q = _gmail_label_query(settings.gmail_labels)
+    with SessionLocal() as db:
+        lookback_days = get_required_config_int(
+            db, CONFIG_KEY_APP_MAIL_INITIAL_LOOKBACK_DAYS, min_value=0
+        )
+        labels = get_required_config_csv_list(db, CONFIG_KEY_APP_MAIL_GMAIL_LABELS)
+    cutoff = datetime.now(tz=timezone.utc) - timedelta(days=lookback_days)
+    label_q = _gmail_label_query(labels)
     query = f"{label_q} after:{cutoff.year}/{cutoff.month}/{cutoff.day}"
     return client.iter_message_stubs(query=query, max_results=max_results)
 
@@ -440,25 +460,26 @@ def _process_one_email(
 ) -> None:
     """Process a single message; does not commit.
 
+    ``classifier`` / ``parser`` must already have rules loaded (callers typically use
+    ``_process_emails`` or ``_ingest_from_gmail``, which load once per batch).
+
     Ensures a ``fetched_emails`` row exists (insert-only for new ``mail_id``), resets
     and then upserts ``fetched_email_enrichments`` for this processing pass.
     """
     stats["fetched"] += 1
     if settings.log_level == "DEBUG":
         logger.debug(
-            "Parsing mail mail_id=%s subject=%r sender=%r",
+            "Processing mail mail_id=%s subject=%r sender=%r",
             email.mail_id,
             (email.subject or "")[:200],
             (email.sender or "")[:120],
         )
     else:
-        logger.info("Parsing mail mail_id=%s", email.mail_id)
+        logger.info("Processing mail mail_id=%s", email.mail_id)
 
     t0 = time.perf_counter()
     completed = False
     try:
-        classifier.load_rules()
-        parser.load_parsers()
         insert_fetched_email_raw(db, email)
         assert email.fetched_email_id is not None
         reset_fetched_email_enrichment(db, email.fetched_email_id)
@@ -502,6 +523,8 @@ def _process_emails(
     """
     classifier = MessageClassifier(db)
     parser = TransactionParser(db)
+    classifier.load_rules()
+    parser.load_parsers()
 
     stats = dict(fetched=0, parsed=0, unparsed=0, skipped=0, duplicate=0)
 
@@ -528,15 +551,12 @@ def _save_cursor(db: Session, client: GmailClient) -> None:
     """Persist the current Gmail ``historyId`` so the next run can do an incremental sync."""
     profile = client.get_profile()
     history_id = str(profile.get("historyId", ""))
-    cursor = db.query(IngestCursor).first()
-    if cursor:
-        cursor.gmail_history_id = history_id
-        cursor.last_run_at = datetime.now(tz=timezone.utc)
-    else:
-        db.add(IngestCursor(
-            gmail_history_id=history_id,
-            last_run_at=datetime.now(tz=timezone.utc),
-        ))
+    upsert_config_value(db, CONFIG_KEY_INTERNAL_MAIL_GMAIL_HISTORY_ID, history_id or None)
+    upsert_config_value(
+        db,
+        CONFIG_KEY_INTERNAL_MAIL_INGEST_LAST_RUN_AT,
+        datetime.now(tz=timezone.utc).isoformat(),
+    )
     commit_with_retry(db)
     logger.debug("Saved ingest cursor historyId=%s", history_id)
 
@@ -546,7 +566,7 @@ def _save_cursor(db: Session, client: GmailClient) -> None:
 def _log_ingest_summary(stats: dict) -> None:
     """Log a one-line ingestion summary (CLI / scheduled ingest)."""
     logger.info(
-        "Done — fetched: %s  parsed: %s  unparsed: %s  skipped: %s  duplicate: %s",
+        "Ingestion Summary : fetched: %s  parsed: %s  unparsed: %s  skipped: %s  duplicate: %s",
         stats["fetched"],
         stats["parsed"],
         stats["unparsed"],

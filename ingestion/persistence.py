@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.models.fetched_email import FetchedEmail
 from backend.app.models.fetched_email_enrichment import FetchedEmailEnrichment
+from backend.app.models.app_config import AppConfig
 from backend.app.models.transaction import Transaction
 from backend.app.models.unparsed_message import UnparsedMessage
 from backend.database import flush_with_retry
@@ -212,3 +213,58 @@ def upsert_transaction(db: Session, fields: dict) -> str:
     except IntegrityError:
         return "duplicate"
     return "inserted"
+
+
+# ── DB app_config key/value ───────────────────────────────────────────────────
+#
+# Convention:
+# - ``internal.*``: read-only runtime state (not user-updatable via API)
+# - ``app.*``: user-updatable runtime config
+
+CONFIG_KEY_INTERNAL_MAIL_GMAIL_HISTORY_ID = "internal.mail.gmail.history_id"
+CONFIG_KEY_INTERNAL_MAIL_INGEST_LAST_RUN_AT = "internal.mail.ingest.last_run_at"
+
+CONFIG_KEY_APP_MAIL_GMAIL_LABELS = "app.mail.gmail.labels"
+CONFIG_KEY_APP_MAIL_POLL_SECONDS = "app.mail.poll_seconds"
+CONFIG_KEY_APP_MAIL_INITIAL_LOOKBACK_DAYS = "app.mail.initial_lookback_days"
+CONFIG_KEY_APP_INGEST_CONFIDENCE_THRESHOLD = "app.ingest.confidence_threshold"
+
+
+def get_config_value(db: Session, key: str) -> Optional[str]:
+    row = db.get(AppConfig, key)
+    return None if row is None else row.value
+
+
+def upsert_config_value(db: Session, key: str, value: Optional[str]) -> None:
+    row = db.get(AppConfig, key)
+    if row is None:
+        db.add(AppConfig(key=key, value=value))
+    else:
+        row.value = value
+
+
+def get_required_config_value(db: Session, key: str) -> str:
+    raw = (get_config_value(db, key) or "").strip()
+    if not raw:
+        raise ValueError(f"Missing required app_config key {key!r}")
+    return raw
+
+
+def get_required_config_int(db: Session, key: str, *, min_value: Optional[int] = None) -> int:
+    raw = get_required_config_value(db, key)
+    try:
+        v = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"Invalid int for app_config key {key!r}: {raw!r}") from exc
+    if min_value is not None:
+        v = max(min_value, v)
+    return v
+
+
+def get_required_config_csv_list(db: Session, key: str) -> list[str]:
+    raw = get_required_config_value(db, key)
+    parts = [p.strip() for p in raw.split(",")]
+    parts = [p for p in parts if p]
+    if not parts:
+        raise ValueError(f"Invalid CSV list for app_config key {key!r}: {raw!r}")
+    return parts

@@ -45,7 +45,7 @@ class FetchedEmailRead(BaseModel):
 
 
 class FetchedEmailWithEnrichmentResponse(FetchedEmailRead):
-    """``GET /api/v1/emails/{mail_id}`` — cached email row with optional nested enrichment."""
+    """Cached email row with optional nested enrichment (``GET /emails/{mail_id}`` or ``GET /emails/by-id/{id}``)."""
 
     enrichment: Optional[FetchedEmailEnrichmentDetailRead] = None
 

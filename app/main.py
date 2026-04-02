@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.app.exception_handlers import emails_request_validation_handler
 from backend.app.lifecycle import scheduled_ingest_lifespan
 from backend.app.logging_setup import ensure_backend_stderr_logging
-from backend.app.routers import accounts, analytics, classifications, emails, parsers, stats, transactions
+from backend.app.routers import accounts, analytics, app_config, classifications, emails, parsers, stats, transactions
 
 
 def create_app() -> FastAPI:
@@ -59,6 +59,7 @@ def create_app() -> FastAPI:
         prefix="/api/v1/parsers",
         tags=["Parsers"],
     )
+    app.include_router(app_config.router, prefix="/api/v1/app-config", tags=["AppConfig"])
     app.include_router(accounts.router, prefix="/api/v1/accounts", tags=["Accounts"])
     app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["Analytics"])
     app.include_router(stats.router, prefix="/api/v1/stats", tags=["Stats"])

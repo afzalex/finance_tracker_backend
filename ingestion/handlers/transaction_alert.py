@@ -5,10 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from backend.config import settings
 from backend.ingestion.handlers.context import HandlerContext
 from backend.ingestion.persistence import (
+    CONFIG_KEY_APP_INGEST_CONFIDENCE_THRESHOLD,
     delete_transactions_for_mail_id,
+    get_required_config_int,
     remove_unparsed,
     set_email_parser_id,
     upsert_transaction,
@@ -51,9 +52,12 @@ def handle(ctx: HandlerContext) -> None:
 
         fields = parse_result.fields
         confidence = fields.get("confidence", 0)
-        if confidence < settings.confidence_threshold:
+        threshold = get_required_config_int(
+            ctx.db, CONFIG_KEY_APP_INGEST_CONFIDENCE_THRESHOLD, min_value=0
+        )
+        if confidence < threshold:
             raise ParserAttemptError(
-                failure_reason=f"low_confidence:{confidence}",
+                failure_reason=f"low_confidence:{confidence}<{threshold}",
                 parser_id=parse_result.parser_id,
             )
 

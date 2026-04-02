@@ -88,8 +88,9 @@ Pipeline stages
    upserted into ``transactions``; duplicates use ``txn_id`` when present.
 
 7. **Cursor** — after a successful Gmail history sync the new
-   ``historyId`` is persisted to the ``ingest_cursor`` table so the next
-   run fetches only new messages.
+   ``historyId`` is persisted in ``app_config`` (key ``mail.gmail.history_id``)
+   so the next run fetches only new messages. Other runtime config can use the
+   same table.
 
 Adding a new bank / provider
 -----------------------------

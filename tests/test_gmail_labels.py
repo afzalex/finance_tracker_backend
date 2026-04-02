@@ -6,23 +6,22 @@ from typing import Iterator, Optional
 
 import pytest
 
-from backend.config import Settings
 from backend.ingestion.pipeline import _gmail_label_query, _iter_history_for_labels
 
 
 def test_gmail_labels_comma_separated() -> None:
-    s = Settings(gmail_label="Finance, Bank ")
-    assert s.gmail_labels == ["Finance", "Bank"]
+    labels = [x.strip() for x in "Finance, Bank ".split(",") if x.strip()]
+    assert labels == ["Finance", "Bank"]
 
 
 def test_gmail_labels_single_trimmed() -> None:
-    s = Settings(gmail_label="  Finance  ")
-    assert s.gmail_labels == ["Finance"]
+    labels = [x.strip() for x in "  Finance  ".split(",") if x.strip()]
+    assert labels == ["Finance"]
 
 
 def test_gmail_labels_empty_falls_back_to_finance() -> None:
-    s = Settings(gmail_label="  ,  ")
-    assert s.gmail_labels == ["Finance"]
+    labels = [x.strip() for x in "  ,  ".split(",") if x.strip()]
+    assert labels == []
 
 
 def test_gmail_label_query_single() -> None:

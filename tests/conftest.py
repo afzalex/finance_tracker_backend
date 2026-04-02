@@ -19,10 +19,17 @@ from backend.app.models.account import Account  # noqa: F401
 from backend.app.models.classification import Classification
 from backend.app.models.fetched_email import FetchedEmail  # noqa: F401
 from backend.app.models.fetched_email_enrichment import FetchedEmailEnrichment  # noqa: F401
-from backend.app.models.ingest_cursor import IngestCursor  # noqa: F401
+from backend.app.models.app_config import AppConfig  # noqa: F401
 from backend.app.models.parser import Parser
 from backend.app.models.transaction import Transaction  # noqa: F401
 from backend.app.models.unparsed_message import UnparsedMessage  # noqa: F401
+from backend.ingestion.persistence import (
+    CONFIG_KEY_APP_INGEST_CONFIDENCE_THRESHOLD,
+    CONFIG_KEY_APP_MAIL_GMAIL_LABELS,
+    CONFIG_KEY_APP_MAIL_INITIAL_LOOKBACK_DAYS,
+    CONFIG_KEY_APP_MAIL_POLL_SECONDS,
+    upsert_config_value,
+)
 
 
 @pytest.fixture()
@@ -37,6 +44,12 @@ def db() -> Session:
     Base.metadata.create_all(engine)
     SessionLocal = sessionmaker(bind=engine)
     session = SessionLocal()
+    # Seed required runtime config (mirrors the migration defaults).
+    upsert_config_value(session, CONFIG_KEY_APP_MAIL_GMAIL_LABELS, "Finance")
+    upsert_config_value(session, CONFIG_KEY_APP_MAIL_POLL_SECONDS, "300")
+    upsert_config_value(session, CONFIG_KEY_APP_MAIL_INITIAL_LOOKBACK_DAYS, "30")
+    upsert_config_value(session, CONFIG_KEY_APP_INGEST_CONFIDENCE_THRESHOLD, "50")
+    session.commit()
     yield session
     session.close()
     Base.metadata.drop_all(engine)

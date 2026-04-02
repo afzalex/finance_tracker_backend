@@ -16,6 +16,7 @@ from backend.app.schemas.analytics import (
     MerchantSummary,
     MonthlyStats,
 )
+from backend.app.schemas.app_config import AppConfigRead, AppConfigUpdate
 from backend.app.schemas.classifications import (
     ClassificationCreate,
     ClassificationRead,
@@ -46,6 +47,8 @@ from backend.app.schemas.transactions import (
 __all__ = [
     "AccountRead",
     "AccountType",
+    "AppConfigRead",
+    "AppConfigUpdate",
     "CashflowPoint",
     "CategoryBreakdown",
     "ClassificationCreate",

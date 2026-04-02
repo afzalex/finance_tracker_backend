@@ -125,6 +125,27 @@ def _rule_name(db: Session, classification_id: int | None, parser_id: int | None
 
 
 @router.get(
+    "/by-id/{fetched_email_id}",
+    response_model=FetchedEmailWithEnrichmentResponse,
+    summary="Get cached email by internal row id",
+)
+async def get_email_by_surrogate_id(
+    fetched_email_id: int = Path(..., ge=1, description="Surrogate PK ``fetched_emails.id``"),
+    db: Session = Depends(get_db),
+) -> FetchedEmailWithEnrichmentResponse:
+    """Return one cached email and its enrichment (same shape as ``GET /{mail_id}``)."""
+    email = db.get(FetchedEmail, fetched_email_id)
+    if email is None:
+        raise HTTPException(status_code=404, detail="Email not found")
+    enrichment = db.get(FetchedEmailEnrichment, email.id)
+    base = FetchedEmailRead.model_validate(email)
+    return FetchedEmailWithEnrichmentResponse(
+        **base.model_dump(),
+        enrichment=_enrichment_detail(db, enrichment) if enrichment else None,
+    )
+
+
+@router.get(
     "/unparsed",
     response_model=list[UnparsedEmailListItem],
     summary="List emails in the unparsed queue",
