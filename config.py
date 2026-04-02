@@ -53,6 +53,13 @@ class Settings(BaseSettings):
             "(``poll_seconds``). Disable in tests via env ``API_SCHEDULED_INGEST_ENABLED=false``."
         ),
     )
+    api_serve_frontend: bool = Field(
+        default=True,
+        description=(
+            "When True, ``GET /`` serves the placeholder ``index.html`` (or future static frontend). "
+            "Set ``API_SERVE_FRONTEND=false`` for API-only deployments behind a separate web server."
+        ),
+    )
 
 
 settings = Settings()

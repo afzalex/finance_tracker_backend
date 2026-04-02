@@ -1,9 +1,13 @@
 """FastAPI application factory for the Finance Tracker backend."""
 
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
+from backend.config import settings
 from backend.app.exception_handlers import emails_request_validation_handler
 from backend.app.lifecycle import scheduled_ingest_lifespan
 from backend.app.logging_setup import ensure_backend_stderr_logging
@@ -20,11 +24,14 @@ from backend.app.routers import (
 )
 
 
-def create_app() -> FastAPI:
+def create_app(*, serve_frontend: bool | None = None) -> FastAPI:
     """Create, configure, and return the FastAPI application instance.
 
     Registers all API routers under ``/api/v1`` and adds CORS middleware
     permitting read-only access from local frontend dev servers.
+
+    ``serve_frontend`` overrides ``settings.api_serve_frontend`` (env ``API_SERVE_FRONTEND``)
+    for tests; when false, ``GET /`` is not registered.
     """
     ensure_backend_stderr_logging()
 
@@ -79,6 +86,15 @@ def create_app() -> FastAPI:
     async def health() -> dict:
         """Liveness check — returns ``{"status": "ok"}`` when the server is running."""
         return {"status": "ok"}
+
+    _serve = settings.api_serve_frontend if serve_frontend is None else serve_frontend
+    if _serve:
+
+        @app.get("/", include_in_schema=False)
+        async def index() -> FileResponse:
+            """Placeholder landing page for local dev (to be replaced by frontend)."""
+            index_path = Path(__file__).resolve().parents[1] / "index.html"
+            return FileResponse(index_path)
 
     return app
 

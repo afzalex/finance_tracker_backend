@@ -74,6 +74,7 @@ Key variables:
 | `CONFIDENCE_THRESHOLD` | `50` | Minimum parse confidence (0–100) to accept a transaction |
 | `ENV` | `development` | Runtime environment label (`development` or `production`) |
 | `LOG_LEVEL` | `INFO` | Log verbosity: `TRACE` (includes SQL echo), `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `API_SERVE_FRONTEND` | `true` | When `true`, `GET /` serves the placeholder HTML; set `false` for API-only (e.g. reverse proxy serves the SPA). |
 
 ### 5. Authenticate with Gmail
 
