@@ -59,3 +59,11 @@ class TransactionListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class TransactionDistinctCatalog(BaseModel):
+    """Distinct dimension values from stored transactions (for filters / pickers)."""
+
+    providers: list[str]
+    merchants: list[str]
+    counterparties: list[str]

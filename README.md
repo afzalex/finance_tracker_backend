@@ -238,6 +238,7 @@ npm i axios
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/v1/transactions` | Paginated, filterable transaction list |
+| `GET` | `/api/v1/transactions/distinct` | Unique providers, merchants, counterparties (`include_merchants_in_counterparties` optional) |
 | `GET` | `/api/v1/classifications` | Email classifier rules (priority order) |
 | `POST` | `/api/v1/classifications` | Create a classification rule |
 | `PATCH` | `/api/v1/classifications/{id}` | Partial update |

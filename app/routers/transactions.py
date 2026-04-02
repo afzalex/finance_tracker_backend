@@ -8,7 +8,16 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from backend.app.schemas import AccountType, Direction, Status, SubType, TransactionListResponse, TransactionRead, TransactionType
+from backend.app.schemas import (
+    AccountType,
+    Direction,
+    Status,
+    SubType,
+    TransactionDistinctCatalog,
+    TransactionListResponse,
+    TransactionRead,
+    TransactionType,
+)
 from backend.app.services.transaction_service import TransactionListParams, TransactionService
 from backend.database import get_db
 
@@ -74,6 +83,32 @@ def _read(txn) -> TransactionRead:
     )
 
 
+@router.get(
+    "/distinct",
+    response_model=TransactionDistinctCatalog,
+    summary="Distinct providers, merchants, and counterparties",
+)
+async def distinct_transaction_catalog(
+    db: Session = Depends(get_db),
+    include_merchants_in_counterparties: bool = Query(
+        False,
+        description=(
+            "When true, ``counterparties`` is the union of distinct ``counterparty_name`` "
+            "and distinct ``merchant`` values (``merchants`` is unchanged)."
+        ),
+    ),
+) -> TransactionDistinctCatalog:
+    """Unique non-empty ``provider``, ``merchant``, and ``counterparty_name`` values from all transactions."""
+    providers, merchants, counterparties = TransactionService(db).distinct_catalog(
+        include_merchants_in_counterparties=include_merchants_in_counterparties
+    )
+    return TransactionDistinctCatalog(
+        providers=providers,
+        merchants=merchants,
+        counterparties=counterparties,
+    )
+
+
 @router.get("", response_model=TransactionListResponse)
 async def list_transactions(
     db: Session = Depends(get_db),
@@ -86,7 +121,13 @@ async def list_transactions(
     date_from: Optional[date] = Query(None, description="ISO date YYYY-MM-DD"),
     date_to: Optional[date] = Query(None, description="ISO date YYYY-MM-DD"),
     search: Optional[str] = Query(None, description="Search by merchant or payee"),
-    sort_by: str = Query("transacted_at", pattern="^(transacted_at|amount|merchant)$"),
+    sort_by: str = Query(
+        "transacted_at",
+        pattern=(
+            "^(transacted_at|amount|merchant|provider|account_id|"
+            "transaction_type|counterparty)$"
+        ),
+    ),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
 ) -> TransactionListResponse:
     service = TransactionService(db)

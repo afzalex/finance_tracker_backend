@@ -41,6 +41,7 @@ from backend.app.schemas.enums import (
 from backend.app.schemas.parsers import ParserCreate, ParserRead, ParserUpdate
 from backend.app.schemas.transactions import (
     TransactionBase,
+    TransactionDistinctCatalog,
     TransactionListResponse,
     TransactionRead,
 )
@@ -69,6 +70,7 @@ __all__ = [
     "Status",
     "SubType",
     "TransactionBase",
+    "TransactionDistinctCatalog",
     "TransactionListResponse",
     "TransactionRead",
     "TransactionType",
