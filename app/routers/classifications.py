@@ -5,10 +5,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.app.models.classification import Classification
+from backend.app.models.fetched_email_enrichment import FetchedEmailEnrichment
 from backend.app.schemas import ClassificationCreate, ClassificationRead, ClassificationUpdate
 from backend.database import get_db
 
@@ -27,7 +28,16 @@ def _clamp_priority(value: int) -> int:
     # Backward-compat: existing DB rows may have 0. Enforce 1..100 in API.
     return max(1, min(100, int(value)))
 
-def _read(row: Classification) -> ClassificationRead:
+def _classification_enrichment_count(db: Session, classification_id: int) -> int:
+    n = db.scalar(
+        select(func.count())
+        .select_from(FetchedEmailEnrichment)
+        .where(FetchedEmailEnrichment.classification_id == classification_id)
+    )
+    return int(n or 0)
+
+
+def _read(row: Classification, *, mail_count: int = 0) -> ClassificationRead:
     data = {
         "id": row.id,
         "name": row.name,
@@ -42,6 +52,7 @@ def _read(row: Classification) -> ClassificationRead:
         "is_active": row.is_active,
         "created_at": row.created_at,
         "updated_at": row.updated_at,
+        "mail_count": mail_count,
     }
     return ClassificationRead.model_validate(data)
 
@@ -49,9 +60,20 @@ def _read(row: Classification) -> ClassificationRead:
 @router.get("", response_model=list[ClassificationRead])
 async def list_classifications(db: Session = Depends(get_db)) -> list[ClassificationRead]:
     """Return all classification rules, highest ``priority`` first (same order as the classifier)."""
-    stmt = select(Classification).order_by(Classification.priority.desc(), Classification.id)
-    rows = db.scalars(stmt).all()
-    return [_read(r) for r in rows]
+    mail_count_expr = func.count(FetchedEmailEnrichment.fetched_email_id)
+    stmt = (
+        select(Classification, mail_count_expr)
+        .outerjoin(
+            FetchedEmailEnrichment,
+            FetchedEmailEnrichment.classification_id == Classification.id,
+        )
+        .group_by(Classification)
+        .order_by(Classification.priority.desc(), Classification.id)
+    )
+    return [
+        _read(row, mail_count=int(n or 0))
+        for row, n in db.execute(stmt).all()
+    ]
 
 
 @router.post(
@@ -84,7 +106,7 @@ async def create_classification(
     db.add(row)
     db.commit()
     db.refresh(row)
-    return _read(row)
+    return _read(row, mail_count=0)
 
 
 @router.patch(
@@ -104,7 +126,7 @@ async def patch_classification(
 
     data = body.model_dump(exclude_unset=True)
     if not data:
-        return ClassificationRead.model_validate(row)
+        return _read(row, mail_count=_classification_enrichment_count(db, row.id))
 
     if "message_type" in data:
         data["message_type"] = _message_type_value(data["message_type"])
@@ -114,7 +136,7 @@ async def patch_classification(
     row.updated_at = _utc_naive_now()
     db.commit()
     db.refresh(row)
-    return _read(row)
+    return _read(row, mail_count=_classification_enrichment_count(db, row.id))
 
 
 @router.delete(
@@ -135,4 +157,4 @@ async def delete_classification(
         row.updated_at = _utc_naive_now()
         db.commit()
         db.refresh(row)
-    return _read(row)
+    return _read(row, mail_count=_classification_enrichment_count(db, row.id))

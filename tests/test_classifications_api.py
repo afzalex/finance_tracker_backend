@@ -4,6 +4,8 @@ from fastapi.testclient import TestClient
 
 from backend.app.main import create_app
 from backend.app.models.classification import Classification
+from backend.app.models.fetched_email import FetchedEmail
+from backend.app.models.fetched_email_enrichment import FetchedEmailEnrichment
 from backend.database import get_db
 from tests.conftest import seed_classification
 
@@ -51,6 +53,62 @@ def test_list_classifications_order_and_shape(db) -> None:
     assert data[0]["sender_match_regex"] == r"@bank"
     assert data[1]["id"] == low.id
     assert data[1]["priority"] == 1
+    assert data[0]["mail_count"] == 0
+    assert data[1]["mail_count"] == 0
+
+
+def test_list_classifications_includes_mail_count(db) -> None:
+    high = seed_classification(
+        db,
+        name="High",
+        message_type="TRANSACTION_ALERT",
+        priority=100,
+        sender_match_regex=r"@a",
+    )
+    low = seed_classification(
+        db,
+        name="Low",
+        message_type="OTHER",
+        priority=1,
+        sender_match_regex=r"@b",
+    )
+    for i in range(2):
+        fe = FetchedEmail(
+            mail_id=f"m{i}",
+            internal_date_ms=1,
+            body_text="x",
+        )
+        db.add(fe)
+        db.flush()
+        db.add(
+            FetchedEmailEnrichment(
+                fetched_email_id=fe.id,
+                classification_id=high.id,
+            )
+        )
+    fe3 = FetchedEmail(mail_id="m3", internal_date_ms=1, body_text="x")
+    db.add(fe3)
+    db.flush()
+    db.add(
+        FetchedEmailEnrichment(
+            fetched_email_id=fe3.id,
+            classification_id=low.id,
+        )
+    )
+    db.commit()
+
+    client, app = _client_with_db(db)
+    try:
+        r = client.get("/api/v1/classifications")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data[0]["id"] == high.id
+    assert data[0]["mail_count"] == 2
+    assert data[1]["id"] == low.id
+    assert data[1]["mail_count"] == 1
 
 
 def test_list_classifications_empty(db) -> None:
@@ -182,6 +240,7 @@ def test_create_classification(db) -> None:
     assert data["message_type"] == "OTHER"
     assert data["priority"] == 42
     assert data["is_active"] is True
+    assert data["mail_count"] == 0
 
 
 def test_delete_classification_soft(db) -> None:

@@ -5,9 +5,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from backend.app.models.fetched_email_enrichment import FetchedEmailEnrichment
 from backend.app.models.parser import Parser
 from backend.app.schemas import (
     AccountType,
@@ -30,7 +31,17 @@ def _clamp_priority(value: int) -> int:
     # Backward-compat: existing DB rows may have 0.
     return max(1, min(100, int(value)))
 
-def _read(row: Parser) -> ParserRead:
+
+def _parser_enrichment_count(db: Session, parser_id: int) -> int:
+    n = db.scalar(
+        select(func.count())
+        .select_from(FetchedEmailEnrichment)
+        .where(FetchedEmailEnrichment.parser_id == parser_id)
+    )
+    return int(n or 0)
+
+
+def _read(row: Parser, *, mail_count: int = 0) -> ParserRead:
     def _upper(v: str | None) -> str | None:
         return v.upper() if isinstance(v, str) else None
 
@@ -71,6 +82,7 @@ def _read(row: Parser) -> ParserRead:
         "is_active": row.is_active,
         "created_at": row.created_at,
         "updated_at": row.updated_at,
+        "mail_count": mail_count,
     }
     return ParserRead.model_validate(data)
 
@@ -78,9 +90,20 @@ def _read(row: Parser) -> ParserRead:
 @router.get("", response_model=list[ParserRead])
 async def list_parsers(db: Session = Depends(get_db)) -> list[ParserRead]:
     """Return all parser rules, highest ``priority`` first (same order as ``TransactionParser``)."""
-    stmt = select(Parser).order_by(Parser.priority.desc(), Parser.id)
-    rows = db.scalars(stmt).all()
-    return [_read(r) for r in rows]
+    mail_count_expr = func.count(FetchedEmailEnrichment.fetched_email_id)
+    stmt = (
+        select(Parser, mail_count_expr)
+        .outerjoin(
+            FetchedEmailEnrichment,
+            FetchedEmailEnrichment.parser_id == Parser.id,
+        )
+        .group_by(Parser)
+        .order_by(Parser.priority.desc(), Parser.id)
+    )
+    return [
+        _read(row, mail_count=int(n or 0))
+        for row, n in db.execute(stmt).all()
+    ]
 
 
 @router.post(
@@ -119,7 +142,7 @@ async def create_parser(
     db.add(row)
     db.commit()
     db.refresh(row)
-    return _read(row)
+    return _read(row, mail_count=0)
 
 
 @router.patch(
@@ -139,7 +162,7 @@ async def patch_parser(
 
     data = body.model_dump(exclude_unset=True)
     if not data:
-        return ParserRead.model_validate(row)
+        return _read(row, mail_count=_parser_enrichment_count(db, row.id))
 
     for key, value in data.items():
         if key in {"account_type", "transaction_type", "sub_type", "status"} and value is not None:
@@ -148,7 +171,7 @@ async def patch_parser(
     row.updated_at = _utc_naive_now()
     db.commit()
     db.refresh(row)
-    return _read(row)
+    return _read(row, mail_count=_parser_enrichment_count(db, row.id))
 
 
 @router.delete(
@@ -169,4 +192,4 @@ async def delete_parser(
         row.updated_at = _utc_naive_now()
         db.commit()
         db.refresh(row)
-    return _read(row)
+    return _read(row, mail_count=_parser_enrichment_count(db, row.id))

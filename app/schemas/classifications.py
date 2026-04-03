@@ -27,6 +27,11 @@ class ClassificationRead(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    mail_count: int = Field(
+        0,
+        ge=0,
+        description="Rows in ``fetched_email_enrichments`` with this ``classification_id``.",
+    )
 
 
 class ClassificationUpdate(BaseModel):
