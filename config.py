@@ -45,6 +45,14 @@ class Settings(BaseSettings):
     # ── API ───────────────────────────────────────────────────────────────────
     api_host: str = "0.0.0.0"
     api_port: int = 8000
+    api_cors_origins: list[str] = Field(
+        default=["http://localhost:5173", "http://localhost:3000"],
+        description=(
+            "Allowed CORS origins. Only needed for local dev where the frontend "
+            "dev server runs on a different port than the API. In production the "
+            "SPA is served by the same server so this can be left empty."
+        ),
+    )
     env: str = "development"
     api_scheduled_ingest_enabled: bool = Field(
         default=True,
