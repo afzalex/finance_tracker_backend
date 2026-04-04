@@ -19,6 +19,7 @@ from backend.app.models.account import Account  # noqa: F401
 from backend.app.models.classification import Classification
 from backend.app.models.fetched_email import FetchedEmail  # noqa: F401
 from backend.app.models.fetched_email_enrichment import FetchedEmailEnrichment  # noqa: F401
+from backend.app.models.mail_account import MailAccount  # noqa: F401
 from backend.app.models.app_config import AppConfig  # noqa: F401
 from backend.app.models.parser import Parser
 from backend.app.models.transaction import Transaction  # noqa: F401

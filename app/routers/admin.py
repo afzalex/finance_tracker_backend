@@ -14,7 +14,11 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from google_auth_oauthlib.flow import Flow
 from sqlalchemy.orm import Session
 
-from backend.ingestion.gmail.auth import SCOPES
+from backend.ingestion.gmail.auth import (
+    GmailAuthError,
+    SCOPES,
+    persist_gmail_oauth_credentials,
+)
 from backend.database import get_db
 from backend.ingestion.pipeline import reprocess_all_from_fetched
 
@@ -120,7 +124,7 @@ async def reprocess_all_emails_offline(
 
 @router.post(
     "/mail/gmail/token/start",
-    summary="Start Gmail OAuth flow to create token.json",
+    summary="Start Gmail OAuth flow to store token in mail_accounts",
 )
 async def start_gmail_oauth_token_flow(
     request: Request,
@@ -133,11 +137,10 @@ async def start_gmail_oauth_token_flow(
         min_length=8,
     ),
 ) -> dict:
-    """Return an auth_url to open in a browser. Call the callback endpoint to finish and write token.json."""
+    """Return an auth_url to open in a browser. Call the callback endpoint to finish and persist the token."""
     from backend.config import settings  # local import to keep module import lightweight
 
     credentials_file = settings.gmail_credentials_file
-    token_file = settings.gmail_token_file
     if redirect_uri is None:
         redirect_uri = (
             str(request.base_url).rstrip("/")
@@ -146,8 +149,6 @@ async def start_gmail_oauth_token_flow(
 
     if not os.path.exists(credentials_file):
         raise HTTPException(status_code=409, detail=f"Missing credentials.json at {credentials_file!r}")
-    if os.path.exists(token_file):
-        raise HTTPException(status_code=409, detail=f"token.json already exists at {token_file!r}")
 
     flow = Flow.from_client_secrets_file(credentials_file, scopes=SCOPES, redirect_uri=redirect_uri)
     auth_url, state = flow.authorization_url(
@@ -168,13 +169,14 @@ async def start_gmail_oauth_token_flow(
 
 @router.get(
     "/mail/gmail/token/callback",
-    summary="Finish Gmail OAuth flow and write token.json",
+    summary="Finish Gmail OAuth flow and store token in mail_accounts",
 )
 async def finish_gmail_oauth_token_flow(
     state: str = Query(..., min_length=10),
     code: str = Query(..., min_length=10),
+    db: Session = Depends(get_db),
 ) -> dict:
-    """Exchange the OAuth code for tokens and persist token.json."""
+    """Exchange the OAuth code for tokens and persist to ``mail_accounts``."""
     from backend.config import settings  # local import to keep module import lightweight
 
     pending = _GMAIL_OAUTH_PENDING.pop(state, None)
@@ -182,7 +184,6 @@ async def finish_gmail_oauth_token_flow(
         raise HTTPException(status_code=400, detail="Unknown or expired OAuth state")
 
     credentials_file = settings.gmail_credentials_file
-    token_file = settings.gmail_token_file
     redirect_uri = pending["redirect_uri"]
     code_verifier = pending.get("code_verifier")
 
@@ -196,8 +197,9 @@ async def finish_gmail_oauth_token_flow(
     else:
         flow.fetch_token(code=code)
     creds = flow.credentials
-    os.makedirs(os.path.dirname(os.path.abspath(token_file)), exist_ok=True)
-    with open(token_file, "w", encoding="utf-8") as f:
-        f.write(creds.to_json())
+    try:
+        row = persist_gmail_oauth_credentials(db, creds)
+    except GmailAuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return {"status": "ok", "token_file": token_file}
+    return {"status": "ok", "mail_account_id": row.id, "account_mail_id": row.account_mail_id}

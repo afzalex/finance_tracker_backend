@@ -67,7 +67,7 @@ Key variables:
 |---|---|---|
 | `DATABASE_URL` | `sqlite:///./data/finance.db` | SQLite DB path |
 | `GMAIL_CREDENTIALS_FILE` | `secrets/credentials.json` | OAuth2 client secret JSON from Google Cloud Console |
-| `GMAIL_TOKEN_FILE` | `secrets/token.json` | Token file written after first login |
+| `GMAIL_TOKEN_FILE` | `secrets/token.json` | Legacy path only: optional import into `mail_accounts` during migration; live tokens live in the DB |
 | `GMAIL_LABEL` | `Finance` | Comma-separated Gmail label names (e.g. `Finance,Receipts`). Message search uses OR across labels; incremental history merges each label’s changes and dedupes by message id. Do not use commas inside a label name. |
 | `POLL_SECONDS` | `300` | Interval between Gmail polls in daemon mode |
 | `INITIAL_LOOKBACK_DAYS` | `30` | Look-back window on first ingest run |
@@ -86,7 +86,7 @@ and save it to `secrets/credentials.json`. Then run:
 python -m backend.cli auth
 ```
 
-This opens a browser window for Google sign-in. After you grant access, the token is saved to `secrets/token.json` and subsequent runs will refresh it automatically.
+This opens a browser window for Google sign-in. After you grant access, the token is stored in the `mail_accounts` table and subsequent runs refresh it there automatically.
 
 ### 6. Run database migrations
 

@@ -23,7 +23,13 @@ class Settings(BaseSettings):
 
     # ── Gmail (provider implementation settings; not runtime-tunable) ─────────
     gmail_credentials_file: str = "secrets/credentials.json"
-    gmail_token_file: str = "secrets/token.json"
+    gmail_token_file: str = Field(
+        default="secrets/token.json",
+        description=(
+            "Legacy filesystem path; optional Alembic upgrade may import this file into "
+            "``mail_accounts``. Runtime OAuth tokens are stored in the database."
+        ),
+    )
 
     # ── Ingestion ─────────────────────────────────────────────────────────────
     # Note: runtime-tunable ingestion parameters live in DB ``app_config``.

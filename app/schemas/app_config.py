@@ -9,6 +9,11 @@ from pydantic import BaseModel, Field
 
 
 class AppConfigRead(BaseModel):
+    id: int
+    mail_account_id: int = Field(
+        0,
+        description="``0`` = system-wide config; otherwise matches ``mail_accounts.id``.",
+    )
     key: str
     value: Optional[str]
     updated_at: datetime

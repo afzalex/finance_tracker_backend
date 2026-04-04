@@ -3,10 +3,30 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 
 from backend.app.main import create_app
+from backend.app.models.mail_account import MAIL_PROVIDER_GMAIL, MailAccount
 from backend.app.version import APP_VERSION
 from backend.config import settings
+from backend.database import SessionLocal
+
+
+def _gmail_oauth_initialized() -> bool:
+    try:
+        with SessionLocal() as session:
+            for row in session.scalars(
+                select(MailAccount).where(
+                    MailAccount.provider == MAIL_PROVIDER_GMAIL,
+                    MailAccount.is_active.is_(True),
+                )
+            ).all():
+                if (row.token_json or "").strip():
+                    return True
+    except OperationalError:
+        return False
+    return False
 
 
 def _resolve_setting_path(path_str: str) -> Path:
@@ -32,13 +52,16 @@ def test_app_metadata_basic(db) -> None:
     assert data["openapi_url"].endswith("/openapi.json")
     assert data["docs_url"].endswith("/docs")
     assert data["redoc_url"].endswith("/redoc")
+    assert "primary_mail_account_id" in data
+    assert data["primary_mail_account_id"] is None or isinstance(
+        data["primary_mail_account_id"], int
+    )
 
     expected_healthy = _resolve_setting_path(settings.gmail_credentials_file).exists()
     assert data["is_healthy"] is expected_healthy
 
     expected_initialized = (
-        _resolve_setting_path(settings.gmail_credentials_file).exists()
-        and _resolve_setting_path(settings.gmail_token_file).exists()
+        _resolve_setting_path(settings.gmail_credentials_file).exists() and _gmail_oauth_initialized()
     )
     assert data["is_initialized"] is expected_initialized
 

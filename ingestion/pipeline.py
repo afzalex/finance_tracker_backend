@@ -18,9 +18,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Iterator, Optional
 
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from backend.app.models.fetched_email import FetchedEmail
+from backend.app.models.mail_account import MAIL_PROVIDER_GMAIL, MailAccount
 from backend.app.models.unparsed_message import UnparsedMessage
 from backend.config import settings
 from backend.database import SessionLocal, commit_with_retry
@@ -36,25 +38,42 @@ from backend.ingestion.persistence import (
     CONFIG_KEY_APP_MAIL_POLL_SECONDS,
     CONFIG_KEY_INTERNAL_MAIL_GMAIL_HISTORY_ID,
     CONFIG_KEY_INTERNAL_MAIL_INGEST_LAST_RUN_AT,
+    get_mail_scoped_config_value,
     get_required_config_csv_list,
+    get_required_config_csv_list_mail_scoped,
     get_required_config_int,
-    get_config_value,
     insert_fetched_email_raw,
+    primary_gmail_mail_config_scope_id,
     reset_fetched_email_enrichment,
     set_email_classification,
     set_enrichment_processing_time_ms,
-    upsert_config_value,
+    upsert_mail_scoped_config_value,
 )
 from backend.ingestion.parsers import TransactionParser
 
 logger = logging.getLogger(__name__)
 
+def _gmail_token_present_in_db() -> bool:
+    try:
+        with SessionLocal() as db:
+            for row in db.scalars(
+                select(MailAccount).where(
+                    MailAccount.provider == MAIL_PROVIDER_GMAIL,
+                    MailAccount.is_active.is_(True),
+                )
+            ).all():
+                if (row.token_json or "").strip():
+                    return True
+    except OperationalError:
+        return False
+    return False
+
+
 def _log_gmail_auth_issue(exc: GmailAuthError) -> None:
     credentials_file = settings.gmail_credentials_file
-    token_file = settings.gmail_token_file
 
     creds_exists = os.path.exists(credentials_file)
-    token_exists = os.path.exists(token_file)
+    token_in_db = _gmail_token_present_in_db()
 
     if not creds_exists:
         logger.error(
@@ -64,24 +83,22 @@ def _log_gmail_auth_issue(exc: GmailAuthError) -> None:
             "Next steps:\n"
             "- Download your OAuth client secret JSON from Google Cloud Console.\n"
             "- Save it to the required path above.\n"
-            "- Then authenticate to create the token file via the app (or CLI).\n"
+            "- Then authenticate via the app (or CLI) to store a token in mail_accounts.\n"
             "Details: %s",
             credentials_file,
             exc,
         )
         return
 
-    if not token_exists:
+    if not token_in_db:
         logger.warning(
-            "Mail ingest warning: Gmail is not authenticated yet (token missing).\n"
+            "Mail ingest warning: Gmail is not authenticated yet (no token in mail_accounts).\n"
             "Credentials file found: %s\n"
-            "Missing token file: %s\n"
             "Next steps (frontend-triggered OAuth flow):\n"
             "- Start: POST /api/v1/admin/mail/gmail/token/start?redirect_uri=<callback>\n"
             "- Finish: GET  /api/v1/admin/mail/gmail/token/callback?state=...&code=...\n"
             "Details: %s",
             credentials_file,
-            token_file,
             "No valid Gmail token found.",
         )
         return
@@ -89,11 +106,9 @@ def _log_gmail_auth_issue(exc: GmailAuthError) -> None:
     logger.warning(
         "Mail ingest warning: Gmail authentication failed.\n"
         "Credentials file: %s\n"
-        "Token file: %s\n"
-        "You may need to re-authenticate (regenerate token.json via OAuth).\n"
+        "You may need to re-authenticate (OAuth) to refresh mail_accounts token data.\n"
         "Details: %s",
         credentials_file,
-        token_file,
         exc,
     )
 
@@ -297,7 +312,10 @@ def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> None:
     once_n: Optional[int] = getattr(args, "once", None)
     force_arg: Optional[int] = getattr(args, "force", None)
 
-    label_names = get_required_config_csv_list(db, CONFIG_KEY_APP_MAIL_GMAIL_LABELS)
+    mail_scope_id = primary_gmail_mail_config_scope_id(db)
+    label_names = get_required_config_csv_list_mail_scoped(
+        db, CONFIG_KEY_APP_MAIL_GMAIL_LABELS, mail_scope_id
+    )
 
     classifier = MessageClassifier(db)
     parser = TransactionParser(db)
@@ -310,9 +328,11 @@ def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> None:
         stubs_iter = client.iter_message_stubs(query=query, max_results=once_n)
     elif force_arg is not None:
         max_in_window = None if force_arg < 0 else force_arg
-        stubs_iter = _fetch_full(client, max_results=max_in_window)
+        stubs_iter = _fetch_full(client, max_results=max_in_window, mail_scope_id=mail_scope_id)
     else:
-        history_id = get_config_value(db, CONFIG_KEY_INTERNAL_MAIL_GMAIL_HISTORY_ID)
+        history_id = get_mail_scoped_config_value(
+            db, CONFIG_KEY_INTERNAL_MAIL_GMAIL_HISTORY_ID, mail_scope_id
+        )
 
         if history_id:
             entries = _gmail_history_label_entries(client, label_names)
@@ -320,7 +340,7 @@ def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> None:
                 logger.warning(
                     "No Gmail labels resolved for history sync — falling back to full fetch (lookback window)"
                 )
-                stubs_iter = _fetch_full(client)
+                stubs_iter = _fetch_full(client, mail_scope_id=mail_scope_id)
             else:
                 try:
                     stubs_iter = _iter_history_for_label_ids(
@@ -328,9 +348,9 @@ def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> None:
                     )
                 except HistoryExpiredError:
                     logger.warning("History ID expired — falling back to full fetch")
-                    stubs_iter = _fetch_full(client)
+                    stubs_iter = _fetch_full(client, mail_scope_id=mail_scope_id)
         else:
-            stubs_iter = _fetch_full(client)
+            stubs_iter = _fetch_full(client, mail_scope_id=mail_scope_id)
 
     for stub in stubs_iter:
         msg = client.get_message(stub["id"])
@@ -345,20 +365,26 @@ def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> None:
         commit_with_retry(db)
 
     if once_n is None:
-        _save_cursor(db, client)
+        _save_cursor(db, client, mail_scope_id)
 
     _log_ingest_summary(stats)
 
 
 def _fetch_full(
-    client: GmailClient, *, max_results: Optional[int] = None
+    client: GmailClient,
+    *,
+    max_results: Optional[int] = None,
+    mail_scope_id: int | None = None,
 ) -> Iterator[dict]:
     """Build a lookback query and stream message stubs (newest first within the API order)."""
     with SessionLocal() as db:
+        sid = mail_scope_id if mail_scope_id is not None else primary_gmail_mail_config_scope_id(db)
         lookback_days = get_required_config_int(
             db, CONFIG_KEY_APP_MAIL_INITIAL_LOOKBACK_DAYS, min_value=0
         )
-        labels = get_required_config_csv_list(db, CONFIG_KEY_APP_MAIL_GMAIL_LABELS)
+        labels = get_required_config_csv_list_mail_scoped(
+            db, CONFIG_KEY_APP_MAIL_GMAIL_LABELS, sid
+        )
     cutoff = datetime.now(tz=timezone.utc) - timedelta(days=lookback_days)
     label_q = _gmail_label_query(labels)
     query = f"{label_q} after:{cutoff.year}/{cutoff.month}/{cutoff.day}"
@@ -595,15 +621,18 @@ def _process_emails(
 # ── Gmail cursor ───────────────────────────────────────────────────────────────
 
 
-def _save_cursor(db: Session, client: GmailClient) -> None:
+def _save_cursor(db: Session, client: GmailClient, mail_scope_id: int) -> None:
     """Persist the current Gmail ``historyId`` so the next run can do an incremental sync."""
     profile = client.get_profile()
     history_id = str(profile.get("historyId", ""))
-    upsert_config_value(db, CONFIG_KEY_INTERNAL_MAIL_GMAIL_HISTORY_ID, history_id or None)
-    upsert_config_value(
+    upsert_mail_scoped_config_value(
+        db, CONFIG_KEY_INTERNAL_MAIL_GMAIL_HISTORY_ID, history_id or None, mail_scope_id
+    )
+    upsert_mail_scoped_config_value(
         db,
         CONFIG_KEY_INTERNAL_MAIL_INGEST_LAST_RUN_AT,
         datetime.now(tz=timezone.utc).isoformat(),
+        mail_scope_id,
     )
     commit_with_retry(db)
     logger.debug("Saved ingest cursor historyId=%s", history_id)

@@ -1,12 +1,14 @@
 """Gmail OAuth2 authentication.
 
 Manages the OAuth2 credential lifecycle:
-  - Load saved token from GMAIL_TOKEN_FILE.
-  - Refresh if expired.
-  - Run the local web-server flow on first run to obtain a new token.
-  - Save the refreshed/new token back to GMAIL_TOKEN_FILE.
+  - Load saved token from ``mail_accounts`` (primary Gmail row).
+  - Refresh if expired; persist updated token JSON to the same row.
+  - Interactive browser flow writes tokens via ``persist_gmail_oauth_credentials``.
 """
 
+from __future__ import annotations
+
+import json
 import logging
 import os
 
@@ -14,8 +16,13 @@ from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
+from sqlalchemy import func, select
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session
 
+from backend.app.models.mail_account import MAIL_PROVIDER_GMAIL, MailAccount
 from backend.config import settings
+from backend.database import SessionLocal, commit_with_retry
 from backend.ingestion.mail.errors import MailProviderAuthError
 
 logger = logging.getLogger(__name__)
@@ -28,76 +35,156 @@ class GmailAuthError(MailProviderAuthError):
     """Raised when Gmail authentication fails and user action is required."""
 
 
-def get_credentials() -> Credentials:
-    """Load or refresh Gmail OAuth2 credentials.
-
-    Returns a valid ``Credentials`` object ready for use with the Gmail API.
-
-    Raises:
-        GmailAuthError: If no valid token exists or refresh fails — the caller
-            should surface the message to the user and direct them to run
-            ``finance-tracker auth``.
-    """
-    token_file = settings.gmail_token_file
-    credentials_file = settings.gmail_credentials_file
-
-    creds: Credentials | None = None
-
-    # 1. Try loading a saved token.
-    if os.path.exists(token_file):
-        try:
-            creds = Credentials.from_authorized_user_file(token_file, SCOPES)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Could not load token file %s: %s", token_file, exc)
-
-    # 2. Valid token — return immediately.
-    if creds and creds.valid:
-        return creds
-
-    # 3. Expired but refreshable.
-    if creds and creds.expired and creds.refresh_token:
-        logger.info("Refreshing Gmail access token.")
-        try:
-            creds.refresh(Request())
-            _save_credentials(creds, token_file)
-            return creds
-        except RefreshError as exc:
-            logger.warning("Gmail refresh token revoked: %s", exc)
-            _delete_file(token_file)
-            raise GmailAuthError(
-                "Gmail token has expired or been revoked.\n"
-                "Re-authenticate by running:\n"
-                "  python -m backend.cli auth"
-            ) from exc
-
-    # 4. No usable token — direct user to run auth.
-    if not os.path.exists(credentials_file):
-        raise GmailAuthError(
-            f"Missing OAuth credentials file: {credentials_file}\n"
-            "Download your Desktop app client secret from Google Cloud Console\n"
-            "(APIs & Services → Credentials → OAuth 2.0 Client IDs → Desktop app)\n"
-            "and place it at that path, then run:\n"
-            "  python -m backend.cli auth"
+def _primary_gmail_account_stmt():
+    return (
+        select(MailAccount)
+        .where(
+            MailAccount.provider == MAIL_PROVIDER_GMAIL,
+            MailAccount.is_active.is_(True),
         )
-
-    raise GmailAuthError(
-        "No valid Gmail token found.\n"
-        "Run the following command to authenticate:\n"
-        "  python -m backend.cli auth"
+        .order_by(MailAccount.is_primary.desc(), MailAccount.id.asc())
+        .limit(1)
     )
 
 
-def run_oauth_flow() -> None:
-    """Run the interactive OAuth2 browser flow and save the resulting token.
+def persist_gmail_oauth_credentials(db: Session, creds: Credentials) -> MailAccount:
+    """Store OAuth credentials after a completed flow; sets profile email when available."""
+    from googleapiclient.discovery import build
 
-    Opens a local browser window for the user to grant Gmail read access.
-    The resulting token is written to ``settings.gmail_token_file``.
+    service = build("gmail", "v1", credentials=creds)
+    profile = service.users().getProfile(userId="me").execute()
+    email_raw = profile.get("emailAddress")
+    if not isinstance(email_raw, str) or not email_raw.strip():
+        raise GmailAuthError("Gmail profile did not include an email address.")
+    email = email_raw.strip()
+
+    row = db.scalars(
+        select(MailAccount).where(
+            MailAccount.provider == MAIL_PROVIDER_GMAIL,
+            MailAccount.account_mail_id == email,
+        )
+    ).first()
+    if row is None:
+        legacy = db.scalars(
+            select(MailAccount).where(
+                MailAccount.provider == MAIL_PROVIDER_GMAIL,
+                MailAccount.account_mail_id.is_(None),
+                MailAccount.is_primary.is_(True),
+            )
+        ).first()
+        if legacy is not None:
+            row = legacy
+            row.account_mail_id = email
+        else:
+            count = db.scalar(
+                select(func.count())
+                .select_from(MailAccount)
+                .where(MailAccount.provider == MAIL_PROVIDER_GMAIL)
+            )
+            row = MailAccount(
+                provider=MAIL_PROVIDER_GMAIL,
+                account_mail_id=email,
+                token_json=creds.to_json(),
+                is_active=True,
+                is_primary=(count == 0),
+            )
+            db.add(row)
+
+    row.token_json = creds.to_json()
+    row.is_active = True
+    commit_with_retry(db)
+    db.refresh(row)
+    logger.info("Gmail OAuth token stored for %s (mail_account id=%s)", email, row.id)
+    return row
+
+
+def get_credentials() -> Credentials:
+    """Load or refresh Gmail OAuth2 credentials from the primary ``mail_accounts`` row.
 
     Raises:
-        GmailAuthError: If the credentials file is missing.
+        GmailAuthError: If no valid token exists or refresh fails.
     """
     credentials_file = settings.gmail_credentials_file
-    token_file = settings.gmail_token_file
+
+    try:
+        with SessionLocal() as db:
+            row = db.scalars(_primary_gmail_account_stmt()).first()
+            token_payload = (row.token_json or "").strip() if row is not None else ""
+
+            creds: Credentials | None = None
+            if token_payload:
+                try:
+                    info = json.loads(token_payload)
+                    creds = Credentials.from_authorized_user_info(info, SCOPES)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Could not load Gmail token from mail_accounts: %s", exc)
+
+            if creds and creds.valid:
+                _maybe_backfill_gmail_email(db, row, creds)
+                return creds
+
+            if creds and creds.expired and creds.refresh_token:
+                logger.info("Refreshing Gmail access token.")
+                try:
+                    creds.refresh(Request())
+                    if row is not None:
+                        row.token_json = creds.to_json()
+                        commit_with_retry(db)
+                    _maybe_backfill_gmail_email(db, row, creds)
+                    return creds
+                except RefreshError as exc:
+                    logger.warning("Gmail refresh token revoked: %s", exc)
+                    if row is not None:
+                        row.token_json = None
+                        commit_with_retry(db)
+                    raise GmailAuthError(
+                        "Gmail token has expired or been revoked.\n"
+                        "Re-authenticate by running:\n"
+                        "  python -m backend.cli auth"
+                    ) from exc
+
+            if not os.path.exists(credentials_file):
+                raise GmailAuthError(
+                    f"Missing OAuth credentials file: {credentials_file}\n"
+                    "Download your Desktop app client secret from Google Cloud Console\n"
+                    "(APIs & Services → Credentials → OAuth 2.0 Client IDs → Desktop app)\n"
+                    "and place it at that path, then run:\n"
+                    "  python -m backend.cli auth"
+                )
+
+            raise GmailAuthError(
+                "No valid Gmail token found.\n"
+                "Run the following command to authenticate:\n"
+                "  python -m backend.cli auth"
+            )
+    except GmailAuthError:
+        raise
+    except OperationalError as exc:
+        raise GmailAuthError(
+            "Database is missing mail_accounts (run: alembic upgrade head).\n"
+            f"Details: {exc}"
+        ) from exc
+
+
+def _maybe_backfill_gmail_email(db: Session, row: MailAccount | None, creds: Credentials) -> None:
+    if row is None or row.account_mail_id:
+        return
+    try:
+        from googleapiclient.discovery import build
+
+        service = build("gmail", "v1", credentials=creds)
+        prof = service.users().getProfile(userId="me").execute()
+        email = prof.get("emailAddress")
+        if isinstance(email, str) and email.strip():
+            row.account_mail_id = email.strip()
+            commit_with_retry(db)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Could not backfill Gmail email for mail_account id=%s: %s", row.id, exc)
+
+
+def run_oauth_flow() -> None:
+    """Run the interactive OAuth2 browser flow and save the resulting token to ``mail_accounts``."""
+    credentials_file = settings.gmail_credentials_file
 
     if not os.path.exists(credentials_file):
         raise GmailAuthError(
@@ -110,19 +197,7 @@ def run_oauth_flow() -> None:
     logger.info("Starting OAuth2 browser flow using %s", credentials_file)
     flow = InstalledAppFlow.from_client_secrets_file(credentials_file, scopes=SCOPES)
     creds = flow.run_local_server(port=0)
-    _save_credentials(creds, token_file)
-    logger.info("Gmail authentication complete. Token saved to %s", token_file)
 
-
-def _save_credentials(creds: Credentials, token_file: str) -> None:
-    os.makedirs(os.path.dirname(os.path.abspath(token_file)), exist_ok=True)
-    with open(token_file, "w", encoding="utf-8") as f:
-        f.write(creds.to_json())
-    logger.debug("Saved Gmail token to %s", token_file)
-
-
-def _delete_file(path: str) -> None:
-    try:
-        os.remove(path)
-    except OSError:
-        pass
+    with SessionLocal() as db:
+        persist_gmail_oauth_credentials(db, creds)
+    logger.info("Gmail authentication complete; token stored in mail_accounts.")

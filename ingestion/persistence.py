@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 
 from backend.app.models.fetched_email import FetchedEmail
 from backend.app.models.fetched_email_enrichment import FetchedEmailEnrichment
-from backend.app.models.app_config import AppConfig
+from backend.app.models.app_config import APP_CONFIG_SYSTEM_MAIL_ACCOUNT_ID, AppConfig
+from backend.app.models.mail_account import MAIL_PROVIDER_GMAIL, MailAccount
 from backend.app.models.transaction import Transaction
 from backend.app.models.unparsed_message import UnparsedMessage
 from backend.database import flush_with_retry
@@ -229,29 +230,106 @@ CONFIG_KEY_APP_MAIL_POLL_SECONDS = "app.mail.poll_seconds"
 CONFIG_KEY_APP_MAIL_INITIAL_LOOKBACK_DAYS = "app.mail.initial_lookback_days"
 CONFIG_KEY_APP_INGEST_CONFIDENCE_THRESHOLD = "app.ingest.confidence_threshold"
 
+# Gmail ingest labels + cursors: one row per ``mail_accounts.id`` (use ``0`` only for legacy / system).
+MAIL_SCOPED_CONFIG_KEYS = frozenset(
+    {
+        CONFIG_KEY_APP_MAIL_GMAIL_LABELS,
+        CONFIG_KEY_INTERNAL_MAIL_GMAIL_HISTORY_ID,
+        CONFIG_KEY_INTERNAL_MAIL_INGEST_LAST_RUN_AT,
+    }
+)
 
-def get_config_value(db: Session, key: str) -> Optional[str]:
-    row = db.get(AppConfig, key)
+
+def primary_gmail_mail_config_scope_id(db: Session) -> int:
+    """``mail_accounts.id`` for the active primary Gmail row, else ``0`` (system scope)."""
+    row = db.scalars(
+        select(MailAccount)
+        .where(
+            MailAccount.provider == MAIL_PROVIDER_GMAIL,
+            MailAccount.is_active.is_(True),
+        )
+        .order_by(MailAccount.is_primary.desc(), MailAccount.id.asc())
+        .limit(1)
+    ).first()
+    if row is not None:
+        return row.id
+    return APP_CONFIG_SYSTEM_MAIL_ACCOUNT_ID
+
+
+def get_mail_scoped_config_value(db: Session, key: str, scope_id: int) -> Optional[str]:
+    """Read config for ``scope_id``, then fall back to system rows (``mail_account_id == 0``)."""
+    order = [scope_id]
+    if scope_id != APP_CONFIG_SYSTEM_MAIL_ACCOUNT_ID:
+        order.append(APP_CONFIG_SYSTEM_MAIL_ACCOUNT_ID)
+    for sid in order:
+        raw = get_config_value(db, key, mail_account_id=sid)
+        if raw is not None and str(raw).strip():
+            return raw
+    return None
+
+
+def get_required_config_csv_list_mail_scoped(db: Session, key: str, scope_id: int) -> list[str]:
+    raw = get_mail_scoped_config_value(db, key, scope_id)
+    if raw is None or not str(raw).strip():
+        raise ValueError(
+            f"Missing required app_config key {key!r} for mail_account_id={scope_id} (with system fallback)"
+        )
+    parts = [p.strip() for p in raw.split(",")]
+    parts = [p for p in parts if p]
+    if not parts:
+        raise ValueError(f"Invalid CSV list for app_config key {key!r}: {raw!r}")
+    return parts
+
+
+def upsert_mail_scoped_config_value(
+    db: Session, key: str, value: Optional[str], scope_id: int
+) -> None:
+    upsert_config_value(db, key, value, mail_account_id=scope_id)
+
+
+def _app_config_row(db: Session, key: str, mail_account_id: int) -> Optional[AppConfig]:
+    return db.scalars(
+        select(AppConfig).where(
+            AppConfig.mail_account_id == mail_account_id,
+            AppConfig.key == key,
+        )
+    ).first()
+
+
+def get_config_value(
+    db: Session, key: str, *, mail_account_id: int = APP_CONFIG_SYSTEM_MAIL_ACCOUNT_ID
+) -> Optional[str]:
+    row = _app_config_row(db, key, mail_account_id)
     return None if row is None else row.value
 
 
-def upsert_config_value(db: Session, key: str, value: Optional[str]) -> None:
-    row = db.get(AppConfig, key)
+def upsert_config_value(
+    db: Session, key: str, value: Optional[str], *, mail_account_id: int = APP_CONFIG_SYSTEM_MAIL_ACCOUNT_ID
+) -> None:
+    row = _app_config_row(db, key, mail_account_id)
     if row is None:
-        db.add(AppConfig(key=key, value=value))
+        db.add(AppConfig(mail_account_id=mail_account_id, key=key, value=value))
     else:
         row.value = value
 
 
-def get_required_config_value(db: Session, key: str) -> str:
-    raw = (get_config_value(db, key) or "").strip()
+def get_required_config_value(
+    db: Session, key: str, *, mail_account_id: int = APP_CONFIG_SYSTEM_MAIL_ACCOUNT_ID
+) -> str:
+    raw = (get_config_value(db, key, mail_account_id=mail_account_id) or "").strip()
     if not raw:
         raise ValueError(f"Missing required app_config key {key!r}")
     return raw
 
 
-def get_required_config_int(db: Session, key: str, *, min_value: Optional[int] = None) -> int:
-    raw = get_required_config_value(db, key)
+def get_required_config_int(
+    db: Session,
+    key: str,
+    *,
+    min_value: Optional[int] = None,
+    mail_account_id: int = APP_CONFIG_SYSTEM_MAIL_ACCOUNT_ID,
+) -> int:
+    raw = get_required_config_value(db, key, mail_account_id=mail_account_id)
     try:
         v = int(raw)
     except ValueError as exc:
@@ -261,8 +339,10 @@ def get_required_config_int(db: Session, key: str, *, min_value: Optional[int] =
     return v
 
 
-def get_required_config_csv_list(db: Session, key: str) -> list[str]:
-    raw = get_required_config_value(db, key)
+def get_required_config_csv_list(
+    db: Session, key: str, *, mail_account_id: int = APP_CONFIG_SYSTEM_MAIL_ACCOUNT_ID
+) -> list[str]:
+    raw = get_required_config_value(db, key, mail_account_id=mail_account_id)
     parts = [p.strip() for p in raw.split(",")]
     parts = [p for p in parts if p]
     if not parts:

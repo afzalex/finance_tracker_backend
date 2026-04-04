@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -27,6 +27,8 @@ from backend.app.routers import (
     transactions,
 )
 
+import logging
+logger = logging.getLogger(__name__)
 
 def create_app(*, serve_frontend: bool | None = None) -> FastAPI:
     """Create, configure, and return the FastAPI application instance.
@@ -112,7 +114,12 @@ def create_app(*, serve_frontend: bool | None = None) -> FastAPI:
                 return FileResponse(candidate)
             return FileResponse(_public / "index.html")
 
-    return app
 
+
+    @app.middleware("http")
+    async def log_request(request: Request, call_next):
+        logger.info("Request: %s %s", request.method, request.url.path)
+        return await call_next(request)
+    return app
 
 app = create_app()
