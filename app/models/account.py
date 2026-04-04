@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from sqlalchemy import Integer, String
+from sqlalchemy import Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
@@ -22,3 +22,5 @@ class Account(Base):
     account_id: Mapped[str] = mapped_column(String, nullable=False)
     account_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     display_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+    __table_args__ = (UniqueConstraint("provider", "account_id", name="uq_accounts_provider_account_id"),)

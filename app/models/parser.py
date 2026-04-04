@@ -43,7 +43,10 @@ class Parser(Base):
     transaction_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     sub_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     status: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    default_account_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    default_category: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
+    is_self_transfer: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

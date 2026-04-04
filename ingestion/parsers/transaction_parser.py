@@ -60,6 +60,9 @@ class ParserRuleSnapshot:
     transaction_type: Optional[str]
     sub_type: Optional[str]
     status: Optional[str]
+    default_account_id: Optional[str]
+    default_category: Optional[str]
+    is_self_transfer: bool
 
 
 @dataclass
@@ -106,6 +109,9 @@ class TransactionParser:
                 transaction_type=p.transaction_type,
                 sub_type=p.sub_type,
                 status=p.status,
+                default_account_id=p.default_account_id,
+                default_category=p.default_category,
+                is_self_transfer=bool(p.is_self_transfer),
             )
             for p in rows
         ]
@@ -262,9 +268,11 @@ class TransactionParser:
             internal_date_ms,
         )
 
+        # Parser row defaults first; non-empty named capture groups override.
         def _row_or_group(field_name: str, row_val: Optional[str]) -> Optional[str]:
-            v = _trim(g.get(field_name))
-            return v if v else _trim(row_val)
+            base = _trim(row_val)
+            cap = _trim(g.get(field_name))
+            return cap if cap else base
 
         provider = _row_or_group("provider", row.provider) or _trim(row.label)
         account_type = _row_or_group("account_type", row.account_type)
@@ -272,14 +280,18 @@ class TransactionParser:
         sub_type = _row_or_group("sub_type", row.sub_type)
         status = _row_or_group("status", row.status) or "UNKNOWN"
 
-        account_id = _trim(g.get("account_id"))
+        account_id = _trim(row.default_account_id)
         account_last4 = _trim(g.get("account_last4"))
         card_last4 = _trim(g.get("card_last4"))
-
+        g_acct = _trim(g.get("account_id"))
+        if g_acct:
+            account_id = g_acct
         if not account_id:
             account_id = _find_account_suffix(body, subject, snippet)
         if not account_id:
             account_id = account_last4 or card_last4
+
+        category = _row_or_group("category", row.default_category)
 
         fields: Dict[str, Any] = {
             "mail_id": None,
@@ -307,7 +319,8 @@ class TransactionParser:
             "counterparty_account": _trim(g.get("counterparty_account")),
             "counterparty_number": _trim(g.get("counterparty_number")),
             "counterparty_id": _trim(g.get("counterparty_id")),
-            "category": _trim(g.get("category")),
+            "category": category,
+            "is_self_transfer": row.is_self_transfer,
             "balance": float(_parse_amount(g.get("balance")) or 0) or None,
             "reward_points": float(_parse_amount(g.get("reward_points")) or 0) or None,
             "parser_id": parser_id,

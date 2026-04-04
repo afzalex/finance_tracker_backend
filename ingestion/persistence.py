@@ -202,6 +202,7 @@ def upsert_transaction(db: Session, fields: dict) -> str:
         counterparty_number=fields.get("counterparty_number"),
         counterparty_id=fields.get("counterparty_id"),
         category=fields.get("category"),
+        is_self_transfer=bool(fields.get("is_self_transfer", False)),
         balance=fields.get("balance"),
         reward_points=fields.get("reward_points"),
         parser_id=fields.get("parser_id"),

@@ -31,6 +31,9 @@ class ParserRead(BaseModel):
     transaction_type: Optional[TransactionType] = None
     sub_type: Optional[SubType] = None
     status: Optional[Status] = None
+    default_account_id: Optional[str] = None
+    default_category: Optional[str] = None
+    is_self_transfer: bool = False
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -61,6 +64,9 @@ class ParserUpdate(BaseModel):
     transaction_type: Optional[TransactionType] = None
     sub_type: Optional[SubType] = None
     status: Optional[Status] = None
+    default_account_id: Optional[str] = None
+    default_category: Optional[str] = None
+    is_self_transfer: Optional[bool] = None
     is_active: Optional[bool] = None
 
 
@@ -84,4 +90,7 @@ class ParserCreate(BaseModel):
     transaction_type: Optional[TransactionType] = None
     sub_type: Optional[SubType] = None
     status: Optional[Status] = None
+    default_account_id: Optional[str] = None
+    default_category: Optional[str] = None
+    is_self_transfer: bool = False
     is_active: bool = True

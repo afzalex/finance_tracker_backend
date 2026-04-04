@@ -30,6 +30,7 @@ class TransactionBase(BaseModel):
     counterparty_number: Optional[str] = None
     counterparty_id: Optional[str] = None
     category: Optional[str] = None
+    is_self_transfer: bool = False
     transaction_type: Optional[TransactionType] = None
     sub_type: Optional[SubType] = None
     account_type: Optional[AccountType] = None

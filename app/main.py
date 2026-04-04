@@ -34,7 +34,7 @@ def create_app(*, serve_frontend: bool | None = None) -> FastAPI:
     """Create, configure, and return the FastAPI application instance.
 
     Registers all API routers under ``/api/v1`` and adds CORS middleware
-    permitting read-only access from local frontend dev servers.
+    for configured browser origins (e.g. local frontend dev servers).
 
     ``serve_frontend`` overrides ``settings.api_serve_frontend`` (env ``API_SERVE_FRONTEND``)
     for tests; when false, ``GET /`` is not registered.
@@ -62,27 +62,15 @@ def create_app(*, serve_frontend: bool | None = None) -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.api_cors_origins,
-        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
 
     # ── Routers ───────────────────────────────────────────────────────────────
     app.include_router(transactions.router, prefix="/api/v1/transactions", tags=["Transactions"])
-    app.include_router(
-        emails.router,
-        prefix="/api/v1/emails",
-        tags=["Emails"],
-    )
-    app.include_router(
-        classifications.router,
-        prefix="/api/v1/classifications",
-        tags=["Classifications"],
-    )
-    app.include_router(
-        parsers.router,
-        prefix="/api/v1/parsers",
-        tags=["Parsers"],
-    )
+    app.include_router(emails.router, prefix="/api/v1/emails", tags=["Emails"])
+    app.include_router(classifications.router, prefix="/api/v1/classifications", tags=["Classifications"])
+    app.include_router(parsers.router, prefix="/api/v1/parsers", tags=["Parsers"])
     app.include_router(app_config.router, prefix="/api/v1/app-config", tags=["AppConfig"])
     app.include_router(accounts.router, prefix="/api/v1/accounts", tags=["Accounts"])
     app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["Analytics"])
@@ -118,7 +106,7 @@ def create_app(*, serve_frontend: bool | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def log_request(request: Request, call_next):
-        logger.info("Request: %s %s", request.method, request.url.path)
+        # logger.info("Request: %s %s", request.method, request.url.path)
         return await call_next(request)
     return app
 

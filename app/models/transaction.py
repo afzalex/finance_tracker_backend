@@ -4,7 +4,7 @@ import enum
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, Enum, Float, Index, Integer, String, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Enum, Float, Index, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
@@ -74,6 +74,7 @@ class Transaction(Base):
 
     # ── Categorisation ────────────────────────────────────────────────────────
     category: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    is_self_transfer: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     # ── Financial extras ─────────────────────────────────────────────────────
     balance: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

@@ -136,6 +136,9 @@ def test_create_parser(db) -> None:
     assert data["label"] == "BANK"
     assert data["priority"] == 20
     assert data["is_active"] is True
+    assert data["is_self_transfer"] is False
+    assert data["default_account_id"] is None
+    assert data["default_category"] is None
     assert data["mail_count"] == 0
 
 

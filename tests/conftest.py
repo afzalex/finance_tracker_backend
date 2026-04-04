@@ -105,6 +105,9 @@ def seed_parser(
     account_type: str | None = None,
     txn_date_fmt: str | None = None,
     txn_time_fmt: str | None = None,
+    default_account_id: str | None = None,
+    default_category: str | None = None,
+    is_self_transfer: bool = False,
 ) -> Parser:
     row = Parser(
         name=name,
@@ -120,6 +123,9 @@ def seed_parser(
         account_type=account_type,
         txn_date_fmt=txn_date_fmt,
         txn_time_fmt=txn_time_fmt,
+        default_account_id=default_account_id,
+        default_category=default_category,
+        is_self_transfer=is_self_transfer,
         is_active=True,
     )
     db.add(row)

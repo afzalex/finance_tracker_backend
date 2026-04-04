@@ -9,7 +9,13 @@ re-exports the public API so callers can use ``from backend.app.schemas import â
 
 from __future__ import annotations
 
-from backend.app.schemas.accounts import AccountRead
+from backend.app.schemas.accounts import (
+    AccountFromTransactionsMergedRead,
+    AccountRead,
+    AccountTransactionsConflictEntry,
+    AccountUpsert,
+    AccountUpsertRead,
+)
 from backend.app.schemas.analytics import (
     CashflowPoint,
     CategoryBreakdown,
@@ -48,7 +54,11 @@ from backend.app.schemas.transactions import (
 from backend.app.schemas.meta import AppMetadataRead
 
 __all__ = [
+    "AccountFromTransactionsMergedRead",
     "AccountRead",
+    "AccountTransactionsConflictEntry",
+    "AccountUpsert",
+    "AccountUpsertRead",
     "AccountType",
     "AppConfigRead",
     "AppConfigUpdate",

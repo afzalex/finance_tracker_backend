@@ -206,6 +206,78 @@ def test_confidence_zero_when_no_fields() -> None:
     assert _compute_confidence({}) == 0
 
 
+# ── Parser defaults: account_id, category, self-transfer ─────────────────────
+
+def test_default_account_id_used_when_no_capture(db: Session) -> None:
+    regex = r"(?P<txn_isdebit>debited)\s+INR\s+(?P<amount>[\d.]+)"
+    seed_parser(
+        db,
+        sender_match_regex=r"bank",
+        body_extract_regex=regex,
+        provider="BANK",
+        default_account_id="PRIMARY",
+    )
+    result = _parse(db, sender="x@bank.com", body="Account debited INR 100.00")
+    assert result.success is True
+    assert result.fields["account_id"] == "PRIMARY"
+
+
+def test_regex_account_id_overrides_parser_default(db: Session) -> None:
+    regex = (
+        r"A/c\s+(?P<account_id>\w+)\s+(?P<txn_isdebit>debited)\s+INR\s+(?P<amount>[\d.]+)"
+    )
+    seed_parser(
+        db,
+        sender_match_regex=r"bank",
+        body_extract_regex=regex,
+        provider="BANK",
+        default_account_id="DEFAULT",
+    )
+    result = _parse(db, sender="x@bank.com", body="A/c XX55 debited INR 50.00")
+    assert result.fields["account_id"] == "XX55"
+
+
+def test_default_category_used_when_no_capture(db: Session) -> None:
+    regex = r"(?P<txn_isdebit>debited)\s+INR\s+(?P<amount>[\d.]+)"
+    seed_parser(
+        db,
+        sender_match_regex=r"bank",
+        body_extract_regex=regex,
+        provider="BANK",
+        default_category="Internal",
+    )
+    result = _parse(db, sender="x@bank.com", body="debited INR 10.00")
+    assert result.fields["category"] == "Internal"
+
+
+def test_regex_category_overrides_parser_default(db: Session) -> None:
+    regex = (
+        r"(?P<txn_isdebit>debited)\s+INR\s+(?P<amount>[\d.]+).*?cat\s+(?P<category>\w+)"
+    )
+    seed_parser(
+        db,
+        sender_match_regex=r"bank",
+        body_extract_regex=regex,
+        provider="BANK",
+        default_category="DefaultCat",
+    )
+    result = _parse(db, sender="x@bank.com", body="debited INR 5.00 cat Food")
+    assert result.fields["category"] == "Food"
+
+
+def test_is_self_transfer_from_parser(db: Session) -> None:
+    regex = r"(?P<txn_isdebit>debited)\s+INR\s+(?P<amount>[\d.]+)"
+    seed_parser(
+        db,
+        sender_match_regex=r"bank",
+        body_extract_regex=regex,
+        provider="BANK",
+        is_self_transfer=True,
+    )
+    result = _parse(db, sender="x@bank.com", body="debited INR 1.00")
+    assert result.fields["is_self_transfer"] is True
+
+
 # ── account_id fallback ───────────────────────────────────────────────────────
 
 def test_account_id_falls_back_to_account_last4(db: Session) -> None:
