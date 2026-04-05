@@ -50,6 +50,14 @@ class FetchedEmailWithEnrichmentResponse(FetchedEmailRead):
     enrichment: Optional[FetchedEmailEnrichmentDetailRead] = None
 
 
+class FetchedEmailWithLinkedTransactionsRead(FetchedEmailRead):
+    """Cached email with enrichment and at least one ledger row for the same ``mail_id``."""
+
+    enrichment: FetchedEmailEnrichmentDetailRead
+    last_transacted_at: datetime
+    transaction_count: int
+
+
 class UnparsedEmailListItem(BaseModel):
     """One entry in ``GET /api/v1/emails/unparsed`` — queue row, ``mail_id`` / subject, and enrichment summary.
 

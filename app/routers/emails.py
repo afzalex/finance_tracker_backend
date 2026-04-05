@@ -22,8 +22,12 @@ from backend.app.schemas import (
     FetchedEmailEnrichmentDetailRead,
     FetchedEmailRead,
     FetchedEmailWithEnrichmentResponse,
+    FetchedEmailWithLinkedTransactionsRead,
     UnparsedEmailDetailRead,
     UnparsedEmailListItem,
+)
+from backend.app.services.fetched_email_service import (
+    list_top_emails_with_transaction_and_enrichment,
 )
 from backend.database import get_db
 from backend.ingestion.pipeline import reprocess_one_from_fetched
@@ -188,6 +192,31 @@ async def get_unparsed_email_detail(
         email=FetchedEmailRead.model_validate(fe),
         enrichment=_enrichment_detail(db, enrichment) if enrichment else None,
     )
+
+
+@router.get(
+    "/top-with-transactions",
+    response_model=list[FetchedEmailWithLinkedTransactionsRead],
+    summary="Cached emails with enrichment that have ledger rows",
+)
+async def top_emails_with_transactions(
+    db: Session = Depends(get_db),
+    limit: int = Query(10, ge=1, le=10, description="Number of rows (max 10)."),
+) -> list[FetchedEmailWithLinkedTransactionsRead]:
+    """Most recently transacted ``mail_id`` first (by ``transactions.transacted_at``)."""
+    rows = list_top_emails_with_transaction_and_enrichment(db, limit=limit)
+    out: list[FetchedEmailWithLinkedTransactionsRead] = []
+    for fe, enr, last_at, txn_count in rows:
+        base = FetchedEmailRead.model_validate(fe)
+        out.append(
+            FetchedEmailWithLinkedTransactionsRead(
+                **base.model_dump(),
+                enrichment=_enrichment_detail(db, enr),
+                last_transacted_at=last_at,
+                transaction_count=int(txn_count),
+            )
+        )
+    return out
 
 
 @router.post(

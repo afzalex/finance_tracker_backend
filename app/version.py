@@ -4,5 +4,5 @@ Keep a single source of truth for the API app version displayed by metadata endp
 and used in FastAPI app initialization.
 """
 
-APP_VERSION = "2.0.0"
+APP_VERSION = "2.1.0"
 

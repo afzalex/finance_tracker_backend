@@ -21,6 +21,7 @@ from backend.app.schemas.analytics import (
     CategoryBreakdown,
     MerchantSummary,
     MonthlyStats,
+    TransactionSummaryRead,
 )
 from backend.app.schemas.app_config import AppConfigRead, AppConfigUpdate
 from backend.app.schemas.classifications import (
@@ -33,6 +34,7 @@ from backend.app.schemas.emails import (
     FetchedEmailEnrichmentRead,
     FetchedEmailRead,
     FetchedEmailWithEnrichmentResponse,
+    FetchedEmailWithLinkedTransactionsRead,
     UnparsedEmailDetailRead,
     UnparsedEmailListItem,
 )
@@ -72,9 +74,11 @@ __all__ = [
     "FetchedEmailEnrichmentRead",
     "FetchedEmailRead",
     "FetchedEmailWithEnrichmentResponse",
+    "FetchedEmailWithLinkedTransactionsRead",
     "MerchantSummary",
     "MessageType",
     "MonthlyStats",
+    "TransactionSummaryRead",
     "ParserCreate",
     "ParserRead",
     "ParserUpdate",

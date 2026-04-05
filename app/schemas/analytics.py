@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class MonthlyStats(BaseModel):
@@ -28,6 +28,17 @@ class MerchantSummary(BaseModel):
     merchant: str
     total: float
     transaction_count: int
+
+
+class TransactionSummaryRead(BaseModel):
+    """Credit/debit sums and counts for transactions matching the same filters as the list API."""
+
+    credit_amount: float = Field(..., ge=0)
+    debit_amount: float = Field(..., ge=0)
+    amount: float = Field(..., description="Net: ``credit_amount - debit_amount``.")
+    credit_count: int = Field(..., ge=0)
+    debit_count: int = Field(..., ge=0)
+    count: int = Field(..., ge=0, description="``credit_count + debit_count``.")
 
 
 class CashflowPoint(BaseModel):

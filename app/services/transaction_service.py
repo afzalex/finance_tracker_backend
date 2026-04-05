@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, time
 
-from sqlalchemy import asc, desc, func, or_, select
+from sqlalchemy import asc, case, desc, func, literal, or_, select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import Select
 
 from backend.app.models.transaction import Direction, Transaction
 
@@ -37,6 +38,33 @@ def _day_end(d: date) -> datetime:
     return datetime.combine(d, time.max)
 
 
+def _apply_transaction_filters(stmt: Select, params: TransactionListParams) -> Select:
+    """WHERE clauses shared by list and summary queries (ignores sort/pagination)."""
+    if params.account_id:
+        stmt = stmt.where(Transaction.account_id == params.account_id)
+    if params.provider:
+        stmt = stmt.where(Transaction.provider == params.provider)
+    if params.category:
+        stmt = stmt.where(Transaction.category == params.category)
+    if params.direction:
+        stmt = stmt.where(Transaction.direction == params.direction)
+    if params.date_from:
+        stmt = stmt.where(Transaction.transacted_at >= _day_start(params.date_from))
+    if params.date_to:
+        stmt = stmt.where(Transaction.transacted_at <= _day_end(params.date_to))
+    if params.search:
+        q = params.search.strip()
+        if q:
+            like = f"%{q.lower()}%"
+            stmt = stmt.where(
+                or_(
+                    func.lower(Transaction.merchant).like(like),
+                    func.lower(Transaction.counterparty_name).like(like),
+                )
+            )
+    return stmt
+
+
 class TransactionService:
     """Handles all transaction retrieval queries.
 
@@ -62,31 +90,7 @@ class TransactionService:
         return providers, merchants, counterparties
 
     def list_transactions(self, params: TransactionListParams):
-        stmt = select(Transaction)
-
-        if params.account_id:
-            stmt = stmt.where(Transaction.account_id == params.account_id)
-        if params.provider:
-            stmt = stmt.where(Transaction.provider == params.provider)
-        if params.category:
-            stmt = stmt.where(Transaction.category == params.category)
-        if params.direction:
-            stmt = stmt.where(Transaction.direction == params.direction)
-        if params.date_from:
-            stmt = stmt.where(Transaction.transacted_at >= _day_start(params.date_from))
-        if params.date_to:
-            stmt = stmt.where(Transaction.transacted_at <= _day_end(params.date_to))
-
-        if params.search:
-            q = params.search.strip()
-            if q:
-                like = f"%{q.lower()}%"
-                stmt = stmt.where(
-                    or_(
-                        func.lower(Transaction.merchant).like(like),
-                        func.lower(Transaction.counterparty_name).like(like),
-                    )
-                )
+        stmt = _apply_transaction_filters(select(Transaction), params)
 
         sort_col = Transaction.transacted_at
         if params.sort_by == "amount":
@@ -114,3 +118,51 @@ class TransactionService:
         items = list(self.db.scalars(stmt.offset(offset).limit(params.page_size)).all())
 
         return items, total
+
+    def transaction_summary(self, params: TransactionListParams) -> tuple[float, float, int, int]:
+        """Return (credit_amount, debit_amount, credit_count, debit_count) for filtered rows."""
+        credit_amt = func.coalesce(
+            func.sum(
+                case(
+                    (Transaction.direction == Direction.CREDIT, Transaction.amount_parsed),
+                    else_=literal(0.0),
+                )
+            ),
+            0.0,
+        )
+        debit_amt = func.coalesce(
+            func.sum(
+                case(
+                    (Transaction.direction == Direction.DEBIT, Transaction.amount_parsed),
+                    else_=literal(0.0),
+                )
+            ),
+            0.0,
+        )
+        credit_cnt = func.coalesce(
+            func.sum(
+                case(
+                    (Transaction.direction == Direction.CREDIT, literal(1)),
+                    else_=literal(0),
+                )
+            ),
+            0,
+        )
+        debit_cnt = func.coalesce(
+            func.sum(
+                case(
+                    (Transaction.direction == Direction.DEBIT, literal(1)),
+                    else_=literal(0),
+                )
+            ),
+            0,
+        )
+        stmt = select(credit_amt, debit_amt, credit_cnt, debit_cnt).select_from(Transaction)
+        stmt = _apply_transaction_filters(stmt, params)
+        row = self.db.execute(stmt).one()
+        return (
+            float(row[0] or 0.0),
+            float(row[1] or 0.0),
+            int(row[2] or 0),
+            int(row[3] or 0),
+        )
