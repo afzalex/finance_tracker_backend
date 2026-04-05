@@ -99,6 +99,41 @@ def test_list_unparsed_emails_joins_mail_id_and_names(db) -> None:
     assert payload["enrichment"]["classification_reason"] == "matched sender pattern"
 
 
+def test_list_unparsed_emails_filter_from_to(db) -> None:
+    def ms(y: int, m: int, d: int) -> int:
+        return int(datetime(y, m, d, 12, 0, 0, tzinfo=timezone.utc).timestamp() * 1000)
+
+    fe_out = FetchedEmail(
+        mail_id="jan",
+        subject="Jan",
+        internal_date_ms=ms(2024, 1, 5),
+        body_text="b",
+    )
+    db.add(fe_out)
+    db.flush()
+    db.add(UnparsedMessage(fetched_email_id=fe_out.id, reason="r"))
+    fe_in = FetchedEmail(
+        mail_id="feb",
+        subject="Feb",
+        internal_date_ms=ms(2024, 2, 14),
+        body_text="b",
+    )
+    db.add(fe_in)
+    db.flush()
+    db.add(UnparsedMessage(fetched_email_id=fe_in.id, reason="r"))
+    db.commit()
+
+    client, app = _client_with_db(db)
+    try:
+        r = client.get("/api/v1/emails/unparsed?from=2024-02-01&to=2024-02-29")
+    finally:
+        app.dependency_overrides.clear()
+    assert r.status_code == 200
+    data = r.json()
+    assert len(data) == 1
+    assert data[0]["mail_id"] == "feb"
+
+
 def test_list_unparsed_emails_null_mail_received_at_and_classification_reason(db) -> None:
     fe = FetchedEmail(
         mail_id="gmail-edge",

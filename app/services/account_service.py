@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import date
 from typing import Any, Optional
 
 from sqlalchemy import func, select
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.models.account import Account
 from backend.app.models.transaction import Direction, Transaction
+from backend.app.services.transaction_service import _day_end, _day_start
 from backend.app.schemas.accounts import (
     AccountFromTransactionsMergedRead,
     AccountTransactionsConflictEntry,
@@ -23,29 +25,35 @@ def _norm_at(v: Optional[str]) -> Optional[str]:
     return s if s else None
 
 
-def list_accounts_from_transactions(db: Session) -> list[AccountFromTransactionsMergedRead]:
+def list_accounts_from_transactions(
+    db: Session,
+    *,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+) -> list[AccountFromTransactionsMergedRead]:
     """Group transactions by ``account_id`` (merged), with sums, counts, and optional ``_conflict``."""
-    stmt = (
-        select(
-            Transaction.provider,
-            Transaction.account_id,
-            Transaction.account_type,
-            Transaction.direction,
-            func.sum(Transaction.amount_parsed).label("amount_sum"),
-            func.count().label("cnt"),
-        )
-        .where(
-            Transaction.provider.isnot(None),
-            Transaction.account_id.isnot(None),
-            Transaction.provider != "",
-            Transaction.account_id != "",
-        )
-        .group_by(
-            Transaction.provider,
-            Transaction.account_id,
-            Transaction.account_type,
-            Transaction.direction,
-        )
+    stmt = select(
+        Transaction.provider,
+        Transaction.account_id,
+        Transaction.account_type,
+        Transaction.direction,
+        func.sum(Transaction.amount_parsed).label("amount_sum"),
+        func.count().label("cnt"),
+    ).where(
+        Transaction.provider.isnot(None),
+        Transaction.account_id.isnot(None),
+        Transaction.provider != "",
+        Transaction.account_id != "",
+    )
+    if date_from is not None:
+        stmt = stmt.where(Transaction.transacted_at >= _day_start(date_from))
+    if date_to is not None:
+        stmt = stmt.where(Transaction.transacted_at <= _day_end(date_to))
+    stmt = stmt.group_by(
+        Transaction.provider,
+        Transaction.account_id,
+        Transaction.account_type,
+        Transaction.direction,
     )
     rows = db.execute(stmt).all()
 

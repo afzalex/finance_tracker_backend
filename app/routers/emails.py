@@ -6,9 +6,10 @@ surrogate ``FetchedEmail.id`` (the response includes ``id`` at the top level for
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -61,6 +62,14 @@ def _mail_received_at_utc(internal_date_ms: int) -> datetime | None:
     return datetime.fromtimestamp(internal_date_ms / 1000.0, tz=timezone.utc)
 
 
+def _utc_day_start_ms(d: date) -> int:
+    return int(datetime.combine(d, time.min, tzinfo=timezone.utc).timestamp() * 1000)
+
+
+def _utc_day_end_ms(d: date) -> int:
+    return int(datetime.combine(d, time.max, tzinfo=timezone.utc).timestamp() * 1000)
+
+
 def _rule_name(db: Session, classification_id: int | None, parser_id: int | None) -> tuple[str | None, str | None]:
     c_name = None
     p_name = None
@@ -99,14 +108,34 @@ async def get_email_by_surrogate_id(
     response_model=list[UnparsedEmailListItem],
     summary="List emails in the unparsed queue",
 )
-async def list_unparsed_emails(db: Session = Depends(get_db)) -> list[UnparsedEmailListItem]:
+async def list_unparsed_emails(
+    db: Session = Depends(get_db),
+    from_date: Optional[date] = Query(
+        None,
+        alias="from",
+        description="Only rows whose mail ``internal_date_ms`` is on or after this UTC date.",
+    ),
+    to_date: Optional[date] = Query(
+        None,
+        alias="to",
+        description="Only rows whose mail ``internal_date_ms`` is on or before this UTC date (end of day).",
+    ),
+    date_from: Optional[date] = Query(None, description="Same as ``from``."),
+    date_to: Optional[date] = Query(None, description="Same as ``to``."),
+) -> list[UnparsedEmailListItem]:
     """Return unparsed rows with ``mail_id``, subject, ``mail_received_at`` (UTC from provider internal ms), and optional ``classification_reason`` from enrichment (newest first). Omits body and snippet."""
+    eff_from = from_date or date_from
+    eff_to = to_date or date_to
     stmt = (
         select(UnparsedMessage, FetchedEmail, FetchedEmailEnrichment)
         .join(FetchedEmail, UnparsedMessage.fetched_email_id == FetchedEmail.id)
         .outerjoin(FetchedEmailEnrichment, FetchedEmailEnrichment.fetched_email_id == FetchedEmail.id)
-        .order_by(UnparsedMessage.created_at.desc(), UnparsedMessage.id.desc())
     )
+    if eff_from is not None:
+        stmt = stmt.where(FetchedEmail.internal_date_ms >= _utc_day_start_ms(eff_from))
+    if eff_to is not None:
+        stmt = stmt.where(FetchedEmail.internal_date_ms <= _utc_day_end_ms(eff_to))
+    stmt = stmt.order_by(UnparsedMessage.created_at.desc(), UnparsedMessage.id.desc())
     rows = db.execute(stmt).all()
     out: list[UnparsedEmailListItem] = []
     for um, fe, enr in rows:

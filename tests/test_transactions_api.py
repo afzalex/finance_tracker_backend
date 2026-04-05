@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from fastapi.testclient import TestClient
+
+from backend.app.main import create_app
 from backend.app.models.transaction import Direction, Origin, Transaction
 from backend.app.schemas import TransactionListResponse
 from backend.app.services.transaction_service import TransactionListParams, TransactionService
+from backend.database import get_db
 
 
 def test_transaction_service_list_transactions_basic(db) -> None:
@@ -52,3 +56,50 @@ def test_transaction_service_list_transactions_basic(db) -> None:
     payload = TransactionListResponse(items=items, total=total, page=1, page_size=50).model_dump()
     assert payload["total"] == 2
     assert payload["items"][0]["mail_id"] == "m1"
+
+
+def test_transactions_api_filters_from_to_query_aliases(db) -> None:
+    db.add(
+        Transaction(
+            mail_id="early",
+            transacted_at=datetime(2026, 1, 5, 12, 0, 0),
+            origin=Origin.EMAIL_ALERT,
+            amount="1",
+            amount_parsed=1.0,
+            currency="INR",
+            direction=Direction.DEBIT,
+            provider="P",
+            account_id="a",
+        )
+    )
+    db.add(
+        Transaction(
+            mail_id="mid",
+            transacted_at=datetime(2026, 2, 10, 12, 0, 0),
+            origin=Origin.EMAIL_ALERT,
+            amount="2",
+            amount_parsed=2.0,
+            currency="INR",
+            direction=Direction.DEBIT,
+            provider="P",
+            account_id="a",
+        )
+    )
+    db.commit()
+
+    app = create_app()
+
+    def override_get_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        client = TestClient(app)
+        r = client.get("/api/v1/transactions?from=2026-02-01&to=2026-02-28")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["total"] == 1
+    assert data["items"][0]["mail_id"] == "mid"

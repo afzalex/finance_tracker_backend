@@ -118,8 +118,24 @@ async def list_transactions(
     provider: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
     direction: Optional[Direction] = Query(None),
-    date_from: Optional[date] = Query(None, description="ISO date YYYY-MM-DD"),
-    date_to: Optional[date] = Query(None, description="ISO date YYYY-MM-DD"),
+    from_date: Optional[date] = Query(
+        None,
+        alias="from",
+        description="Start date (YYYY-MM-DD), inclusive; alias of ``date_from``.",
+    ),
+    to_date: Optional[date] = Query(
+        None,
+        alias="to",
+        description="End date (YYYY-MM-DD), inclusive; alias of ``date_to``.",
+    ),
+    date_from: Optional[date] = Query(
+        None,
+        description="Same as query param ``from`` (start date, YYYY-MM-DD).",
+    ),
+    date_to: Optional[date] = Query(
+        None,
+        description="Same as query param ``to`` (end date, YYYY-MM-DD).",
+    ),
     search: Optional[str] = Query(None, description="Search by merchant or payee"),
     sort_by: str = Query(
         "transacted_at",
@@ -130,6 +146,8 @@ async def list_transactions(
     ),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
 ) -> TransactionListResponse:
+    eff_from = from_date or date_from
+    eff_to = to_date or date_to
     service = TransactionService(db)
     items, total = service.list_transactions(
         TransactionListParams(
@@ -139,8 +157,8 @@ async def list_transactions(
             provider=provider,
             category=category,
             direction=direction,
-            date_from=date_from,
-            date_to=date_to,
+            date_from=eff_from,
+            date_to=eff_to,
             search=search,
             sort_by=sort_by,
             sort_order=sort_order,

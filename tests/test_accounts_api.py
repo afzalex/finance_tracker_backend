@@ -155,6 +155,50 @@ def test_accounts_conflict_same_account_id_two_providers(db) -> None:
         app.dependency_overrides.clear()
 
 
+def test_accounts_list_respects_from_to_date_filter(db) -> None:
+    db.add(
+        Transaction(
+            mail_id="e1",
+            transacted_at=datetime(2026, 1, 10, 12, 0, 0),
+            origin=Origin.EMAIL_ALERT,
+            amount="10",
+            amount_parsed=10.0,
+            currency="INR",
+            direction=Direction.DEBIT,
+            provider="P",
+            account_id="A",
+            account_type="SAVINGS",
+        )
+    )
+    db.add(
+        Transaction(
+            mail_id="e2",
+            transacted_at=datetime(2026, 3, 10, 12, 0, 0),
+            origin=Origin.EMAIL_ALERT,
+            amount="20",
+            amount_parsed=20.0,
+            currency="INR",
+            direction=Direction.DEBIT,
+            provider="P",
+            account_id="A",
+            account_type="SAVINGS",
+        )
+    )
+    db.commit()
+
+    client, app = _client_with_db(db)
+    try:
+        r = client.get("/api/v1/accounts?from=2026-03-01&to=2026-03-31")
+    finally:
+        app.dependency_overrides.clear()
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body) == 1
+    assert body[0]["account_id"] == "A"
+    assert body[0]["debit_amount"] == 20.0
+    assert body[0]["count"] == 1
+
+
 def test_put_account_upsert_insert_and_update(db) -> None:
     client, app = _client_with_db(db)
     try:
