@@ -52,6 +52,7 @@ from backend.app.schemas.transactions import (
     TransactionDistinctCatalog,
     TransactionListResponse,
     TransactionRead,
+    TransactionUpdate,
 )
 from backend.app.schemas.meta import AppMetadataRead
 
@@ -88,6 +89,7 @@ __all__ = [
     "TransactionDistinctCatalog",
     "TransactionListResponse",
     "TransactionRead",
+    "TransactionUpdate",
     "TransactionType",
     "UnparsedEmailDetailRead",
     "UnparsedEmailListItem",

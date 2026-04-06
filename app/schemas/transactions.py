@@ -5,7 +5,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+
+from backend.app.constants import DISTINCT_UNNAMED_COUNTERPARTY
 
 from .enums import AccountType, Direction, Status, SubType, TransactionType
 
@@ -53,6 +55,15 @@ class TransactionRead(TransactionBase):
     created_at: datetime
 
 
+class TransactionUpdate(BaseModel):
+    """Mutable transaction fields (API may grow later; only ``is_self_transfer`` today)."""
+
+    is_self_transfer: bool = Field(
+        ...,
+        description="Whether this debit/credit is an internal self-transfer.",
+    )
+
+
 class TransactionListResponse(BaseModel):
     """Paginated wrapper returned by ``GET /api/v1/transactions``."""
 
@@ -68,3 +79,11 @@ class TransactionDistinctCatalog(BaseModel):
     providers: list[str]
     merchants: list[str]
     counterparties: list[str]
+    has_self_transfer_transactions: bool = Field(
+        ...,
+        description="True if at least one row has ``is_self_transfer`` set.",
+    )
+    unnamed_counterparty_key: str = Field(
+        default=DISTINCT_UNNAMED_COUNTERPARTY,
+        description="Synthetic counterparty key included in ``counterparties`` when some rows lack counterparty_name.",
+    )

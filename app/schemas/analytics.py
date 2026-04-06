@@ -23,11 +23,27 @@ class CategoryBreakdown(BaseModel):
 
 
 class MerchantSummary(BaseModel):
-    """Total spend and transaction count for a single merchant."""
+    """DEBIT spend grouped by payee: trimmed ``merchant``, else trimmed ``counterparty_name``, else a sentinel."""
 
-    merchant: str
+    merchant: str = Field(
+        ...,
+        description=(
+            "Group key: non-empty trimmed ``merchant``, else non-empty trimmed ``counterparty_name``, "
+            "else ``__UNDEFINED__``."
+        ),
+    )
     total: float
     transaction_count: int
+    self_transfer_debit_total: float = Field(
+        0.0,
+        ge=0,
+        description="Sum of DEBIT ``amount_parsed`` where ``is_self_transfer`` is true.",
+    )
+    self_transfer_count: int = Field(
+        0,
+        ge=0,
+        description="Count of DEBIT rows in this bucket with ``is_self_transfer`` true.",
+    )
 
 
 class TransactionSummaryRead(BaseModel):
@@ -42,8 +58,10 @@ class TransactionSummaryRead(BaseModel):
 
 
 class CashflowPoint(BaseModel):
-    """Income vs expense for a single calendar month (used in cashflow charts)."""
+    """Per calendar month: credit/debit sums, net, and transaction count."""
 
-    month: str  # "YYYY-MM"
-    income: float
-    expense: float
+    month: str = Field(..., description="Calendar month in YYYY-MM (UTC/local stored ``transacted_at``).")
+    credit: float = Field(..., ge=0, description="Sum of ``amount_parsed`` for CREDIT rows.")
+    debit: float = Field(..., ge=0, description="Sum of ``amount_parsed`` for DEBIT rows.")
+    total: float = Field(..., description="Net: ``credit - debit``.")
+    count: int = Field(..., ge=0, description="Number of transactions in the month.")

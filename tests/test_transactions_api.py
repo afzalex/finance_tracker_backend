@@ -103,3 +103,67 @@ def test_transactions_api_filters_from_to_query_aliases(db) -> None:
     data = r.json()
     assert data["total"] == 1
     assert data["items"][0]["mail_id"] == "mid"
+
+
+def test_patch_transaction_is_self_transfer(db) -> None:
+    t = Transaction(
+        mail_id="patch-me",
+        transacted_at=datetime(2026, 1, 1, 12, 0, 0),
+        origin=Origin.EMAIL_ALERT,
+        amount="10",
+        amount_parsed=10.0,
+        currency="INR",
+        direction=Direction.DEBIT,
+        provider="P",
+        is_self_transfer=False,
+    )
+    db.add(t)
+    db.commit()
+    db.refresh(t)
+    tid = t.id
+
+    app = create_app()
+
+    def override_get_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        client = TestClient(app)
+        r = client.patch(
+            f"/api/v1/transactions/{tid}",
+            json={"is_self_transfer": True},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["id"] == tid
+    assert body["is_self_transfer"] is True
+    assert body["mail_id"] == "patch-me"
+
+    db.expire_all()
+    row = db.get(Transaction, tid)
+    assert row is not None
+    assert row.is_self_transfer is True
+
+
+def test_patch_transaction_not_found(db) -> None:
+    app = create_app()
+
+    def override_get_db():
+        yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        client = TestClient(app)
+        r = client.patch(
+            "/api/v1/transactions/999999",
+            json={"is_self_transfer": False},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert r.status_code == 404
+    assert r.json()["detail"] == "Transaction not found"

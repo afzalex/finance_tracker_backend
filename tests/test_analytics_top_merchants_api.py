@@ -5,6 +5,7 @@ from datetime import datetime
 from fastapi.testclient import TestClient
 
 from backend.app.main import create_app
+from backend.app.constants import TOP_MERCHANTS_UNDEFINED_MERCHANT
 from backend.app.models.transaction import Direction, Origin, Transaction
 from backend.database import get_db
 
@@ -63,6 +64,8 @@ def test_top_merchants_debit_only_and_order(db) -> None:
     assert data[0]["merchant"] == "Alpha"
     assert data[0]["total"] == 600.0
     assert data[0]["transaction_count"] == 2
+    assert data[0]["self_transfer_debit_total"] == 0.0
+    assert data[0]["self_transfer_count"] == 0
     assert data[1]["merchant"] == "Zebra"
 
 
@@ -104,6 +107,8 @@ def test_top_merchants_month_filter(db) -> None:
     assert len(data) == 1
     assert data[0]["total"] == 10.0
     assert data[0]["transaction_count"] == 1
+    assert data[0]["self_transfer_debit_total"] == 0.0
+    assert data[0]["self_transfer_count"] == 0
 
 
 def test_top_merchants_invalid_month_400(db) -> None:
@@ -113,3 +118,172 @@ def test_top_merchants_invalid_month_400(db) -> None:
     finally:
         app.dependency_overrides.clear()
     assert r.status_code == 400
+
+
+def test_top_merchants_undefined_merchant_excludes_self_transfer_by_default(db) -> None:
+    """Default omits ``is_self_transfer`` true; rows with no merchant and no counterparty use ``__UNDEFINED__``."""
+    db.add(
+        Transaction(
+            mail_id="s1",
+            transacted_at=datetime(2026, 4, 1, 12, 0, 0),
+            origin=Origin.EMAIL_ALERT,
+            amount="50",
+            amount_parsed=50.0,
+            currency="INR",
+            direction=Direction.DEBIT,
+            merchant=None,
+            is_self_transfer=True,
+        )
+    )
+    db.add(
+        Transaction(
+            mail_id="s2",
+            transacted_at=datetime(2026, 4, 2, 12, 0, 0),
+            origin=Origin.EMAIL_ALERT,
+            amount="25",
+            amount_parsed=25.0,
+            currency="INR",
+            direction=Direction.DEBIT,
+            merchant="Shop",
+            is_self_transfer=False,
+        )
+    )
+    db.add(
+        Transaction(
+            mail_id="na",
+            transacted_at=datetime(2026, 4, 3, 12, 0, 0),
+            origin=Origin.EMAIL_ALERT,
+            amount="30",
+            amount_parsed=30.0,
+            currency="INR",
+            direction=Direction.DEBIT,
+            merchant=None,
+            is_self_transfer=False,
+        )
+    )
+    db.commit()
+
+    client, app = _client_with_db(db)
+    try:
+        r = client.get("/api/v1/analytics/top-merchants?limit=10")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert r.status_code == 200
+    data = r.json()
+    assert len(data) == 2
+    undef = next(x for x in data if x["merchant"] == TOP_MERCHANTS_UNDEFINED_MERCHANT)
+    assert undef["total"] == 30.0
+    assert undef["transaction_count"] == 1
+    assert undef["self_transfer_debit_total"] == 0.0
+    assert undef["self_transfer_count"] == 0
+    shop = next(x for x in data if x["merchant"] == "Shop")
+    assert shop["total"] == 25.0
+    assert shop["self_transfer_debit_total"] == 0.0
+    assert shop["self_transfer_count"] == 0
+
+
+def test_top_merchants_include_self_transfer_true_does_not_filter_self_flag(db) -> None:
+    db.add(
+        Transaction(
+            mail_id="st",
+            transacted_at=datetime(2026, 4, 1, 12, 0, 0),
+            origin=Origin.EMAIL_ALERT,
+            amount="50",
+            amount_parsed=50.0,
+            currency="INR",
+            direction=Direction.DEBIT,
+            merchant=None,
+            is_self_transfer=True,
+        )
+    )
+    db.add(
+        Transaction(
+            mail_id="norm",
+            transacted_at=datetime(2026, 4, 2, 12, 0, 0),
+            origin=Origin.EMAIL_ALERT,
+            amount="99",
+            amount_parsed=99.0,
+            currency="INR",
+            direction=Direction.DEBIT,
+            merchant="X",
+            is_self_transfer=False,
+        )
+    )
+    db.commit()
+
+    client, app = _client_with_db(db)
+    try:
+        r = client.get("/api/v1/analytics/top-merchants?include_self_transfer=true&limit=10")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert r.status_code == 200
+    data = r.json()
+    assert len(data) == 2
+    x_row = next(x for x in data if x["merchant"] == "X")
+    assert x_row["total"] == 99.0
+    assert x_row["transaction_count"] == 1
+    assert x_row["self_transfer_debit_total"] == 0.0
+    assert x_row["self_transfer_count"] == 0
+    undef = next(x for x in data if x["merchant"] == TOP_MERCHANTS_UNDEFINED_MERCHANT)
+    assert undef["total"] == 50.0
+    assert undef["transaction_count"] == 1
+    assert undef["self_transfer_debit_total"] == 50.0
+    assert undef["self_transfer_count"] == 1
+
+
+def test_top_merchants_merchant_precedence_then_counterparty(db) -> None:
+    db.add(
+        Transaction(
+            mail_id="m1",
+            transacted_at=datetime(2026, 4, 1, 12, 0, 0),
+            origin=Origin.EMAIL_ALERT,
+            amount="10",
+            amount_parsed=10.0,
+            currency="INR",
+            direction=Direction.DEBIT,
+            merchant="Store",
+            counterparty_name="ShouldNotGroupHere",
+        )
+    )
+    db.add(
+        Transaction(
+            mail_id="m2",
+            transacted_at=datetime(2026, 4, 2, 12, 0, 0),
+            origin=Origin.EMAIL_ALERT,
+            amount="20",
+            amount_parsed=20.0,
+            currency="INR",
+            direction=Direction.DEBIT,
+            merchant=None,
+            counterparty_name="Alice",
+        )
+    )
+    db.add(
+        Transaction(
+            mail_id="m3",
+            transacted_at=datetime(2026, 4, 3, 12, 0, 0),
+            origin=Origin.EMAIL_ALERT,
+            amount="5",
+            amount_parsed=5.0,
+            currency="INR",
+            direction=Direction.DEBIT,
+            merchant="   ",
+            counterparty_name="Bob",
+        )
+    )
+    db.commit()
+
+    client, app = _client_with_db(db)
+    try:
+        r = client.get("/api/v1/analytics/top-merchants?limit=10")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert r.status_code == 200
+    data = r.json()
+    by_m = {row["merchant"]: row for row in data}
+    assert by_m["Alice"]["total"] == 20.0
+    assert by_m["Bob"]["total"] == 5.0
+    assert by_m["Store"]["total"] == 10.0

@@ -22,6 +22,36 @@ from backend.database import get_db
 router = APIRouter()
 
 
+def _twelve_month_window_start(anchor: date) -> date:
+    """First day of the calendar month 11 months before ``anchor``'s month (12 months inclusive)."""
+    y, m = anchor.year, anchor.month
+    m -= 11
+    while m < 1:
+        m += 12
+        y -= 1
+    return date(y, m, 1)
+
+
+def _effective_cashflow_range(
+    from_date: Optional[date],
+    to_date: Optional[date],
+    date_from: Optional[date],
+    date_to: Optional[date],
+) -> tuple[date, date]:
+    """Resolve inclusive ``from``/``to`` for cashflow; default last 12 months through today when both absent."""
+    eff_from = from_date or date_from
+    eff_to = to_date or date_to
+    if eff_from is None and eff_to is None:
+        eff_to = date.today()
+        eff_from = _twelve_month_window_start(eff_to)
+        return eff_from, eff_to
+    if eff_to is None:
+        eff_to = date.today()
+    if eff_from is None:
+        eff_from = _twelve_month_window_start(eff_to)
+    return eff_from, eff_to
+
+
 @router.get(
     "/transaction-summary",
     response_model=TransactionSummaryRead,
@@ -76,13 +106,42 @@ async def transaction_summary(
 @router.get("/cashflow", response_model=list[CashflowPoint])
 async def cashflow(
     db: Session = Depends(get_db),
-    months: int = Query(12, ge=1, le=60, description="Number of months to return"),
+    account_id: Optional[str] = Query(None),
+    provider: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    direction: Optional[Direction] = Query(None),
+    from_date: Optional[date] = Query(
+        None,
+        alias="from",
+        description="Start date (YYYY-MM-DD), inclusive. With ``to`` omitted, defaults to 12 months before ``to``.",
+    ),
+    to_date: Optional[date] = Query(
+        None,
+        alias="to",
+        description="End date (YYYY-MM-DD), inclusive end of day. With ``from`` omitted, defaults to today.",
+    ),
+    date_from: Optional[date] = Query(None, description="Same as ``from``."),
+    date_to: Optional[date] = Query(None, description="Same as ``to``."),
+    search: Optional[str] = Query(None, description="Search by merchant or payee"),
 ) -> list[CashflowPoint]:
-    """Monthly income vs expense for the past N months.
+    """Monthly credit, debit, net, and counts; same filters as ``GET /transactions``.
 
-    TODO: Implement in AnalyticsService.
+    When both ``from`` and ``to`` are omitted, uses the last 12 calendar months through today.
     """
-    raise NotImplementedError
+    eff_from, eff_to = _effective_cashflow_range(from_date, to_date, date_from, date_to)
+    return AnalyticsService(db).monthly_cashflow(
+        TransactionListParams(
+            page=1,
+            page_size=1,
+            account_id=account_id,
+            provider=provider,
+            category=category,
+            direction=direction,
+            date_from=eff_from,
+            date_to=eff_to,
+            search=search,
+        )
+    )
 
 
 @router.get("/category-breakdown", response_model=list[CategoryBreakdown])
@@ -124,8 +183,18 @@ async def top_merchants(
     date_from: Optional[date] = Query(None, description="Same as ``from``."),
     date_to: Optional[date] = Query(None, description="Same as ``to``."),
     search: Optional[str] = Query(None, description="Search by merchant or payee"),
+    include_self_transfer: bool = Query(
+        False,
+        description=(
+            "When false (default), exclude rows with ``is_self_transfer`` true "
+            "(null/false still included). When true, do not filter on ``is_self_transfer``."
+        ),
+    ),
 ) -> list[MerchantSummary]:
-    """Top merchants by total DEBIT ``amount_parsed``. Same filters as ``GET /transactions`` except ``direction`` is ignored."""
+    """Top payees by DEBIT ``amount_parsed``: group by merchant, else counterparty name, else ``__UNDEFINED__``.
+
+    Same filters as ``GET /transactions`` except ``direction`` is ignored.
+    """
     eff_from = from_date or date_from
     eff_to = to_date or date_to
     params = TransactionListParams(
@@ -140,7 +209,12 @@ async def top_merchants(
         search=search,
     )
     try:
-        return AnalyticsService(db).top_merchants(params, limit=limit, month=month)
+        return AnalyticsService(db).top_merchants(
+            params,
+            limit=limit,
+            month=month,
+            include_self_transfer=include_self_transfer,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

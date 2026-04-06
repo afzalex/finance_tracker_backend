@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi.testclient import TestClient
 
 from backend.app.main import create_app
+from backend.app.constants import DISTINCT_UNNAMED_COUNTERPARTY
 from backend.app.models.transaction import Direction, Origin, Transaction
 from backend.app.services.transaction_service import TransactionService
 from backend.database import get_db
@@ -61,15 +62,40 @@ def test_distinct_catalog_service(db) -> None:
     )
     db.commit()
 
-    p, m, c = TransactionService(db).distinct_catalog(include_merchants_in_counterparties=False)
+    p, m, c, has_self = TransactionService(db).distinct_catalog(
+        include_merchants_in_counterparties=False
+    )
     assert p == ["HDFC", "ICICI"]
     assert m == ["Amazon", "Swiggy"]
-    assert c == ["Alice", "Bob"]
+    assert DISTINCT_UNNAMED_COUNTERPARTY in c
+    assert c == ["Alice", "Bob", DISTINCT_UNNAMED_COUNTERPARTY]
+    assert has_self is False
 
-    p2, m2, c2 = TransactionService(db).distinct_catalog(include_merchants_in_counterparties=True)
+    p2, m2, c2, h2 = TransactionService(db).distinct_catalog(include_merchants_in_counterparties=True)
     assert p2 == p and m2 == m
-    assert set(c2) == {"Alice", "Bob", "Amazon", "Swiggy"}
-    assert len(c2) == 4
+    assert set(c2) == {"Alice", "Bob", "Amazon", "Swiggy", DISTINCT_UNNAMED_COUNTERPARTY}
+    assert len(c2) == 5
+    assert h2 is False
+
+
+def test_distinct_catalog_unnamed_merchant_and_self_transfer(db) -> None:
+    db.add(
+        _txn(
+            mail_id="u1",
+            provider="P",
+            merchant=None,
+            counterparty_name="X",
+            is_self_transfer=True,
+        )
+    )
+    db.add(_txn(mail_id="u2", provider="P", merchant="  ", counterparty_name="Y"))
+    db.commit()
+
+    p, m, c, has_self = TransactionService(db).distinct_catalog()
+    assert p == ["P"]
+    assert m == []
+    assert has_self is True
+    assert "X" in c and "Y" in c
 
 
 def test_distinct_catalog_api_empty(db) -> None:
@@ -79,7 +105,54 @@ def test_distinct_catalog_api_empty(db) -> None:
     finally:
         app.dependency_overrides.clear()
     assert r.status_code == 200
-    assert r.json() == {"providers": [], "merchants": [], "counterparties": []}
+    assert r.json() == {
+        "providers": [],
+        "merchants": [],
+        "counterparties": [],
+        "has_self_transfer_transactions": False,
+        "unnamed_counterparty_key": DISTINCT_UNNAMED_COUNTERPARTY,
+    }
+
+
+def test_distinct_catalog_date_range(db) -> None:
+    db.add(
+        _txn(
+            mail_id="jan",
+            provider="OnlyJan",
+            merchant="JanMerchant",
+            counterparty_name="JanCp",
+            transacted_at=datetime(2026, 1, 15, 12, 0, 0),
+        )
+    )
+    db.add(
+        _txn(
+            mail_id="feb",
+            provider="OnlyFeb",
+            merchant="FebMerchant",
+            counterparty_name="FebCp",
+            transacted_at=datetime(2026, 2, 15, 12, 0, 0),
+        )
+    )
+    db.commit()
+
+    p, m, c, has_self = TransactionService(db).distinct_catalog(
+        date_from=date(2026, 1, 1),
+        date_to=date(2026, 1, 31),
+    )
+    assert p == ["OnlyJan"]
+    assert m == ["JanMerchant"]
+    assert c == ["JanCp"]
+
+    client, app = _client_with_db(db)
+    try:
+        r = client.get("/api/v1/transactions/distinct?from=2026-01-01&to=2026-01-31")
+    finally:
+        app.dependency_overrides.clear()
+    assert r.status_code == 200
+    data = r.json()
+    assert data["providers"] == ["OnlyJan"]
+    assert data["merchants"] == ["JanMerchant"]
+    assert data["counterparties"] == ["JanCp"]
 
 
 def test_distinct_catalog_api_with_query(db) -> None:
