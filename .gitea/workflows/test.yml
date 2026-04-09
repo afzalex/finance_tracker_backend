@@ -1,0 +1,43 @@
+# ── Finance Tracker Backend — Test Workflow ────────────────────────────────────
+#
+# Runs on every push to `dev`.
+# Installs Python dependencies and runs the pytest suite.
+#
+# ── Notes ──────────────────────────────────────────────────────────────────────
+#
+# pyproject.toml uses `where=[".."]` to locate the `backend` package, which
+# expects the repo to live inside a parent directory as `backend/`.
+# A symlink satisfies that constraint without moving files.
+#
+# ──────────────────────────────────────────────────────────────────────────────
+
+name: Test
+
+on:
+  push:
+    branches:
+      - dev
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # pyproject.toml expects the repo to live inside a parent dir as 'backend/'.
+          # Symlink satisfies that constraint without moving files.
+          ln -sf $GITHUB_WORKSPACE $(dirname $GITHUB_WORKSPACE)/backend
+          pip install -e .
+
+      - name: Run tests
+        run: python -m pytest tests/
