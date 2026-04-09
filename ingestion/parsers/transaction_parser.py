@@ -62,7 +62,6 @@ class ParserRuleSnapshot:
     status: Optional[str]
     default_account_id: Optional[str]
     default_category: Optional[str]
-    is_self_transfer: bool
 
 
 @dataclass
@@ -111,7 +110,6 @@ class TransactionParser:
                 status=p.status,
                 default_account_id=p.default_account_id,
                 default_category=p.default_category,
-                is_self_transfer=bool(p.is_self_transfer),
             )
             for p in rows
         ]
@@ -320,7 +318,6 @@ class TransactionParser:
             "counterparty_number": _trim(g.get("counterparty_number")),
             "counterparty_id": _trim(g.get("counterparty_id")),
             "category": category,
-            "is_self_transfer": row.is_self_transfer,
             "balance": float(_parse_amount(g.get("balance")) or 0) or None,
             "reward_points": float(_parse_amount(g.get("reward_points")) or 0) or None,
             "parser_id": parser_id,

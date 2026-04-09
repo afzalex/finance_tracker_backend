@@ -25,6 +25,8 @@ from backend.app.routers import (
     stats,
     metadata,
     transactions,
+    mail_accounts,
+    exclusion_rules,
 )
 
 import logging
@@ -71,7 +73,9 @@ def create_app(*, serve_frontend: bool | None = None) -> FastAPI:
     app.include_router(emails.router, prefix="/api/v1/emails", tags=["Emails"])
     app.include_router(classifications.router, prefix="/api/v1/classifications", tags=["Classifications"])
     app.include_router(parsers.router, prefix="/api/v1/parsers", tags=["Parsers"])
+    app.include_router(exclusion_rules.router, prefix="/api/v1/exclusion-rules", tags=["ExclusionRules"])
     app.include_router(app_config.router, prefix="/api/v1/app-config", tags=["AppConfig"])
+    app.include_router(mail_accounts.router, prefix="/api/v1/mail-accounts", tags=["MailAccounts"])
     app.include_router(accounts.router, prefix="/api/v1/accounts", tags=["Accounts"])
     app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["Analytics"])
     app.include_router(stats.router, prefix="/api/v1/stats", tags=["Stats"])

@@ -148,3 +148,42 @@ def test_cashflow_no_query_params_uses_default_range(db) -> None:
         app.dependency_overrides.clear()
     assert r.status_code == 200
     assert isinstance(r.json(), list)
+
+
+def test_cashflow_ignores_excluded(db) -> None:
+    db.add(
+        Transaction(
+            mail_id="included",
+            transacted_at=datetime(2026, 1, 10, 12, 0, 0),
+            origin=Origin.EMAIL_ALERT,
+            amount="100",
+            amount_parsed=100.0,
+            currency="INR",
+            direction=Direction.DEBIT,
+        )
+    )
+    db.add(
+        Transaction(
+            mail_id="excluded",
+            transacted_at=datetime(2026, 1, 15, 12, 0, 0),
+            origin=Origin.EMAIL_ALERT,
+            amount="50",
+            amount_parsed=50.0,
+            currency="INR",
+            direction=Direction.DEBIT,
+            is_excluded=True,
+        )
+    )
+    db.commit()
+
+    client, app = _client_with_db(db)
+    try:
+        r = client.get("/api/v1/analytics/cashflow?from=2026-01-01&to=2026-01-31")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert r.status_code == 200
+    rows = r.json()
+    assert len(rows) == 1
+    assert rows[0]["debit"] == 100.0
+    assert rows[0]["count"] == 1

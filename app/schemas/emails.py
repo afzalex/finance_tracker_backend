@@ -17,6 +17,7 @@ class FetchedEmailEnrichmentRead(BaseModel):
     classification: Optional[str] = None
     classification_reason: Optional[str] = None
     parser_id: Optional[int] = None
+    exclusion_rule_id: Optional[int] = None
     processing_time_ms: Optional[int] = None
     created_at: datetime
     updated_at: datetime

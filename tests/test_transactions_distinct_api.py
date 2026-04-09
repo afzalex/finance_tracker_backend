@@ -62,39 +62,35 @@ def test_distinct_catalog_service(db) -> None:
     )
     db.commit()
 
-    p, m, c, has_self = TransactionService(db).distinct_catalog(
+    p, m, c = TransactionService(db).distinct_catalog(
         include_merchants_in_counterparties=False
     )
     assert p == ["HDFC", "ICICI"]
     assert m == ["Amazon", "Swiggy"]
     assert DISTINCT_UNNAMED_COUNTERPARTY in c
     assert c == ["Alice", "Bob", DISTINCT_UNNAMED_COUNTERPARTY]
-    assert has_self is False
 
-    p2, m2, c2, h2 = TransactionService(db).distinct_catalog(include_merchants_in_counterparties=True)
+    p2, m2, c2 = TransactionService(db).distinct_catalog(include_merchants_in_counterparties=True)
     assert p2 == p and m2 == m
     assert set(c2) == {"Alice", "Bob", "Amazon", "Swiggy", DISTINCT_UNNAMED_COUNTERPARTY}
     assert len(c2) == 5
-    assert h2 is False
 
 
-def test_distinct_catalog_unnamed_merchant_and_self_transfer(db) -> None:
+def test_distinct_catalog_unnamed_merchant(db) -> None:
     db.add(
         _txn(
             mail_id="u1",
             provider="P",
             merchant=None,
             counterparty_name="X",
-            is_self_transfer=True,
         )
     )
     db.add(_txn(mail_id="u2", provider="P", merchant="  ", counterparty_name="Y"))
     db.commit()
 
-    p, m, c, has_self = TransactionService(db).distinct_catalog()
+    p, m, c = TransactionService(db).distinct_catalog()
     assert p == ["P"]
     assert m == []
-    assert has_self is True
     assert "X" in c and "Y" in c
 
 
@@ -109,7 +105,6 @@ def test_distinct_catalog_api_empty(db) -> None:
         "providers": [],
         "merchants": [],
         "counterparties": [],
-        "has_self_transfer_transactions": False,
         "unnamed_counterparty_key": DISTINCT_UNNAMED_COUNTERPARTY,
     }
 
@@ -135,7 +130,7 @@ def test_distinct_catalog_date_range(db) -> None:
     )
     db.commit()
 
-    p, m, c, has_self = TransactionService(db).distinct_catalog(
+    p, m, c = TransactionService(db).distinct_catalog(
         date_from=date(2026, 1, 1),
         date_to=date(2026, 1, 31),
     )

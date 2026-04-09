@@ -183,13 +183,6 @@ async def top_merchants(
     date_from: Optional[date] = Query(None, description="Same as ``from``."),
     date_to: Optional[date] = Query(None, description="Same as ``to``."),
     search: Optional[str] = Query(None, description="Search by merchant or payee"),
-    include_self_transfer: bool = Query(
-        False,
-        description=(
-            "When false (default), exclude rows with ``is_self_transfer`` true "
-            "(null/false still included). When true, do not filter on ``is_self_transfer``."
-        ),
-    ),
 ) -> list[MerchantSummary]:
     """Top payees by DEBIT ``amount_parsed``: group by merchant, else counterparty name, else ``__UNDEFINED__``.
 
@@ -213,7 +206,6 @@ async def top_merchants(
             params,
             limit=limit,
             month=month,
-            include_self_transfer=include_self_transfer,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

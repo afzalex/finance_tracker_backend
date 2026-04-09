@@ -34,16 +34,6 @@ class MerchantSummary(BaseModel):
     )
     total: float
     transaction_count: int
-    self_transfer_debit_total: float = Field(
-        0.0,
-        ge=0,
-        description="Sum of DEBIT ``amount_parsed`` where ``is_self_transfer`` is true.",
-    )
-    self_transfer_count: int = Field(
-        0,
-        ge=0,
-        description="Count of DEBIT rows in this bucket with ``is_self_transfer`` true.",
-    )
 
 
 class TransactionSummaryRead(BaseModel):

@@ -147,23 +147,14 @@ class TransactionService:
         n = self.db.scalar(stmt)
         return (n or 0) > 0
 
-    def _has_self_transfer_rows(
-        self, *, date_from: date | None = None, date_to: date | None = None
-    ) -> bool:
-        stmt = select(func.count()).select_from(Transaction).where(Transaction.is_self_transfer.is_(True))
-        for clause in _distinct_date_clauses(date_from, date_to):
-            stmt = stmt.where(clause)
-        n = self.db.scalar(stmt)
-        return (n or 0) > 0
-
     def distinct_catalog(
         self,
         *,
         include_merchants_in_counterparties: bool = False,
         date_from: date | None = None,
         date_to: date | None = None,
-    ) -> tuple[list[str], list[str], list[str], bool]:
-        """Return sorted unique providers, merchants, counterparties, and self-transfer flag.
+    ) -> tuple[list[str], list[str], list[str]]:
+        """Return sorted unique providers, merchants, and counterparties.
 
         When ``date_from`` / ``date_to`` are set, only transactions in that ``transacted_at`` range
         (inclusive calendar days) are considered — same semantics as ``GET /transactions``.
@@ -188,8 +179,7 @@ class TransactionService:
         else:
             counterparties = sorted(counterparty_set)
 
-        has_self_transfer = self._has_self_transfer_rows(date_from=date_from, date_to=date_to)
-        return providers, merchants, counterparties, has_self_transfer
+        return providers, merchants, counterparties
 
     def list_transactions(self, params: TransactionListParams):
         stmt = _apply_transaction_filters(select(Transaction), params)
@@ -260,6 +250,7 @@ class TransactionService:
             0,
         )
         stmt = select(credit_amt, debit_amt, credit_cnt, debit_cnt).select_from(Transaction)
+        stmt = stmt.where(Transaction.is_excluded.is_(False))
         stmt = _apply_transaction_filters(stmt, params)
         row = self.db.execute(stmt).one()
         return (
@@ -268,16 +259,3 @@ class TransactionService:
             int(row[2] or 0),
             int(row[3] or 0),
         )
-
-    def update_transaction_is_self_transfer(
-        self, transaction_id: int, *, is_self_transfer: bool
-    ) -> Transaction | None:
-        """Set ``is_self_transfer`` on the row; returns ``None`` if id is missing.
-
-        Caller must ``commit`` (and optionally ``refresh``) the session.
-        """
-        txn = self.db.get(Transaction, transaction_id)
-        if txn is None:
-            return None
-        txn.is_self_transfer = bool(is_self_transfer)
-        return txn

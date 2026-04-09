@@ -28,6 +28,7 @@ class FetchedEmailEnrichment(Base):
     classification: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     classification_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     parser_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    exclusion_rule_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     processing_time_ms: Mapped[Optional[int]] = mapped_column(
         Integer,
         nullable=True,

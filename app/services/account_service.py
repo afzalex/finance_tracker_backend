@@ -44,6 +44,7 @@ def list_accounts_from_transactions(
         Transaction.account_id.isnot(None),
         Transaction.provider != "",
         Transaction.account_id != "",
+        Transaction.is_excluded.is_(False),
     )
     if date_from is not None:
         stmt = stmt.where(Transaction.transacted_at >= _day_start(date_from))

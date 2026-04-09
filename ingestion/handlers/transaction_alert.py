@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import json
 from typing import Optional
 
 from backend.ingestion.handlers.context import HandlerContext
@@ -11,10 +12,15 @@ from backend.ingestion.persistence import (
     delete_transactions_for_mail_id,
     get_required_config_int,
     remove_unparsed,
+    set_email_exclusion_rule_id,
     set_email_parser_id,
     upsert_transaction,
     upsert_unparsed,
 )
+import re
+from sqlalchemy import select
+from backend.app.models.exclusion_rule import ExclusionRule
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,6 +31,21 @@ class ParserAttemptError(Exception):
         super().__init__(failure_reason)
         self.failure_reason = failure_reason
         self.parser_id = parser_id
+
+
+def _parse_csv_ints(csv: str | None) -> list[int]:
+    """Parse a comma-separated string of ints (e.g. ``parser_ids``)."""
+    if not csv or not csv.strip():
+        return []
+    out: list[int] = []
+    for p in csv.split(","):
+        p = p.strip()
+        if p:
+            try:
+                out.append(int(p))
+            except ValueError:
+                continue
+    return out
 
 
 def handle(ctx: HandlerContext) -> None:
@@ -62,6 +83,41 @@ def handle(ctx: HandlerContext) -> None:
             )
 
         fields["mail_id"] = ctx.email.mail_id
+        
+        # Check exclusion rules
+
+        stmt = select(ExclusionRule).where(ExclusionRule.is_active.is_(True))
+        rules = ctx.db.scalars(stmt).all()
+        is_ex = False
+        matched_rule_id = None
+        
+        tx_merchant = (fields.get("merchant") or "").strip().casefold()
+        tx_counterparty = (fields.get("counterparty_name") or "").strip().casefold()
+
+        for rule in rules:
+            rule_parser_ids = _parse_csv_ints(rule.parser_ids)
+            parser_match = bool(rule_parser_ids and parse_result.parser_id in rule_parser_ids)
+
+            payee_match = False
+            if rule.payees:
+                try:
+                    rule_payees = [str(x).strip().casefold() for x in json.loads(rule.payees)]
+                    if (tx_merchant and tx_merchant in rule_payees) or (tx_counterparty and tx_counterparty in rule_payees):
+                        payee_match = True
+                except Exception:
+                    pass
+
+            if parser_match or payee_match:
+                is_ex = True
+                matched_rule_id = rule.id
+                break
+        
+        fields["is_excluded"] = is_ex
+        fields["exclusion_rule_id"] = matched_rule_id
+
+        # Record exclusion rule on enrichment
+        set_email_exclusion_rule_id(ctx.db, ctx.email.fetched_email_id, matched_rule_id)
+
         saved = upsert_transaction(ctx.db, fields)
         if saved == "duplicate":
             ctx.stats["duplicate"] += 1

@@ -32,7 +32,7 @@ class TransactionBase(BaseModel):
     counterparty_number: Optional[str] = None
     counterparty_id: Optional[str] = None
     category: Optional[str] = None
-    is_self_transfer: bool = False
+    is_excluded: bool = False
     transaction_type: Optional[TransactionType] = None
     sub_type: Optional[SubType] = None
     account_type: Optional[AccountType] = None
@@ -43,6 +43,7 @@ class TransactionBase(BaseModel):
     reward_points: Optional[float] = None
     parser_id: Optional[int] = None
     classification_id: Optional[int] = None
+    exclusion_rule_id: Optional[int] = None
     transacted_at: datetime
 
 
@@ -53,15 +54,6 @@ class TransactionRead(TransactionBase):
     id: int
     mail_id: str
     created_at: datetime
-
-
-class TransactionUpdate(BaseModel):
-    """Mutable transaction fields (API may grow later; only ``is_self_transfer`` today)."""
-
-    is_self_transfer: bool = Field(
-        ...,
-        description="Whether this debit/credit is an internal self-transfer.",
-    )
 
 
 class TransactionListResponse(BaseModel):
@@ -79,10 +71,6 @@ class TransactionDistinctCatalog(BaseModel):
     providers: list[str]
     merchants: list[str]
     counterparties: list[str]
-    has_self_transfer_transactions: bool = Field(
-        ...,
-        description="True if at least one row has ``is_self_transfer`` set.",
-    )
     unnamed_counterparty_key: str = Field(
         default=DISTINCT_UNNAMED_COUNTERPARTY,
         description="Synthetic counterparty key included in ``counterparties`` when some rows lack counterparty_name.",

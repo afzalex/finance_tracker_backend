@@ -55,6 +55,7 @@ def get_or_create_fetched_email_enrichment(
             classification=None,
             classification_reason=None,
             parser_id=None,
+            exclusion_rule_id=None,
         )
         db.add(row)
     return row
@@ -67,6 +68,7 @@ def reset_fetched_email_enrichment(db: Session, fetched_email_id: int) -> None:
     row.classification = None
     row.classification_reason = None
     row.parser_id = None
+    row.exclusion_rule_id = None
     row.processing_time_ms = None
     flush_with_retry(db)
 
@@ -98,6 +100,12 @@ def set_email_parser_id(db: Session, fetched_email_id: int, parser_id: Optional[
     """Write the chosen parser id (even when parsing later fails)."""
     row = get_or_create_fetched_email_enrichment(db, fetched_email_id)
     row.parser_id = parser_id
+
+
+def set_email_exclusion_rule_id(db: Session, fetched_email_id: int, exclusion_rule_id: Optional[int]) -> None:
+    """Write the matched exclusion rule id."""
+    row = get_or_create_fetched_email_enrichment(db, fetched_email_id)
+    row.exclusion_rule_id = exclusion_rule_id
 
 
 def upsert_unparsed(
@@ -202,11 +210,12 @@ def upsert_transaction(db: Session, fields: dict) -> str:
         counterparty_number=fields.get("counterparty_number"),
         counterparty_id=fields.get("counterparty_id"),
         category=fields.get("category"),
-        is_self_transfer=bool(fields.get("is_self_transfer", False)),
+        is_excluded=bool(fields.get("is_excluded", False)),
         balance=fields.get("balance"),
         reward_points=fields.get("reward_points"),
         parser_id=fields.get("parser_id"),
         classification_id=fields.get("classification_id"),
+        exclusion_rule_id=fields.get("exclusion_rule_id"),
     )
     try:
         with db.begin_nested():

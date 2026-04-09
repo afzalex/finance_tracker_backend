@@ -74,15 +74,16 @@ class Transaction(Base):
 
     # ── Categorisation ────────────────────────────────────────────────────────
     category: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    is_self_transfer: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_excluded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     # ── Financial extras ─────────────────────────────────────────────────────
     balance: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     reward_points: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
-    # ── Parser / classifier traceability ─────────────────────────────────────
+    # ── Parser / classifier / exclusion traceability ─────────────────────
     parser_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     classification_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    exclusion_rule_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     # ── Timestamps ───────────────────────────────────────────────────────────
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)

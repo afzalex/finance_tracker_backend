@@ -265,19 +265,6 @@ def test_regex_category_overrides_parser_default(db: Session) -> None:
     assert result.fields["category"] == "Food"
 
 
-def test_is_self_transfer_from_parser(db: Session) -> None:
-    regex = r"(?P<txn_isdebit>debited)\s+INR\s+(?P<amount>[\d.]+)"
-    seed_parser(
-        db,
-        sender_match_regex=r"bank",
-        body_extract_regex=regex,
-        provider="BANK",
-        is_self_transfer=True,
-    )
-    result = _parse(db, sender="x@bank.com", body="debited INR 1.00")
-    assert result.fields["is_self_transfer"] is True
-
-
 # ── account_id fallback ───────────────────────────────────────────────────────
 
 def test_account_id_falls_back_to_account_last4(db: Session) -> None:

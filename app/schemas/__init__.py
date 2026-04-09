@@ -52,9 +52,10 @@ from backend.app.schemas.transactions import (
     TransactionDistinctCatalog,
     TransactionListResponse,
     TransactionRead,
-    TransactionUpdate,
 )
 from backend.app.schemas.meta import AppMetadataRead
+from backend.app.schemas.mail_accounts import MailAccountCreate, MailAccountRead
+from backend.app.schemas.exclusion_rules import ExclusionRuleCreate, ExclusionRuleRead, ExclusionRuleUpdate
 
 __all__ = [
     "AccountFromTransactionsMergedRead",
@@ -89,9 +90,13 @@ __all__ = [
     "TransactionDistinctCatalog",
     "TransactionListResponse",
     "TransactionRead",
-    "TransactionUpdate",
     "TransactionType",
     "UnparsedEmailDetailRead",
     "UnparsedEmailListItem",
     "AppMetadataRead",
+    "MailAccountRead",
+    "MailAccountCreate",
+    "ExclusionRuleCreate",
+    "ExclusionRuleRead",
+    "ExclusionRuleUpdate",
 ]
