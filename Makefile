@@ -23,7 +23,7 @@ OUT ?= ../frontend/src/api
 VENV         := $(MAKEFILE_DIR)/.venv
 PYTHON       := $(VENV)/bin/python
 PIP          := $(VENV)/bin/pip
-.PHONY: help install test coverage api api-noreload openapi gen-client ingest migrate shell
+.PHONY: help install test coverage api api-noreload openapi gen-client auth ingest migrate shell
 
 help:
 	@echo "Finance Tracker backend — common commands"
@@ -34,6 +34,7 @@ help:
 	@echo "  make api                  Run FastAPI (uvicorn, reload)"
 	@echo "  make openapi              Export OpenAPI to openapi.json"
 	@echo "  make gen-client [OUT=…]   Generate TS Axios client (default OUT=$(OUT); needs Node npx; frontend needs axios)"
+	@echo "  make auth                 Start Gmail OAuth (stores token in mail_accounts)"
 	@echo "  make ingest [ARGS=…]      Run CLI ingest (default incremental Gmail; pass ARGS for --once, --offline, …)"
 	@echo "  make migrate              alembic upgrade head"
 	@echo "  make shell                Show PYTHONPATH and venv python path"
@@ -68,6 +69,9 @@ openapi: $(PYTHON)
 
 gen-client: $(PYTHON)
 	@bash "$(MAKEFILE_DIR)/scripts/generate_ts_client.sh" "$(OUT)"
+
+auth: $(PYTHON)
+	@cd "$(MAKEFILE_DIR)" && "$(PYTHON)" -m backend.cli auth
 
 ingest: $(PYTHON)
 	@cd "$(MAKEFILE_DIR)" && "$(PYTHON)" -m backend.cli ingest $(ARGS)

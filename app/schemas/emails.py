@@ -51,6 +51,105 @@ class FetchedEmailWithEnrichmentResponse(FetchedEmailRead):
     enrichment: Optional[FetchedEmailEnrichmentDetailRead] = None
 
 
+class FetchedEmailContentRead(BaseModel):
+    """Cached email content without enrichment (lighter response for match previews)."""
+
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    mail_id: str
+    thread_id: Optional[str] = None
+    subject: Optional[str] = None
+    sender: Optional[str] = None
+    snippet: Optional[str] = None
+    internal_date_ms: int
+    body_text: str
+    created_at: datetime
+
+
+class MatcherPreviewRequest(BaseModel):
+    """Match cached emails against subject/sender/body regexes.
+
+    Provide ``mail_id`` to check exactly one cached message (returns ``matched``).
+    Omit ``mail_id`` and set ``limit`` (1–10) to scan recent mail for up to ``limit`` matches.
+    """
+
+    mail_id: Optional[str] = None
+    subject_match_regex: Optional[str] = None
+    sender_match_regex: Optional[str] = None
+    body_match_regex: Optional[str] = None
+    limit: int = 3
+    lookback_days: int = 30
+
+
+class MatcherPreviewItemRead(BaseModel):
+    """One preview row (includes ``body_text`` for client-side extract previews)."""
+
+    mail_id: str
+    subject: Optional[str] = None
+    sender: Optional[str] = None
+    snippet: Optional[str] = None
+    body_text: str
+    internal_date_ms: int
+    created_at: datetime
+
+
+class MatcherPreviewResponse(BaseModel):
+    """Matcher preview: either top-N matches or a single-mail match verdict."""
+
+    items: list[MatcherPreviewItemRead]
+    scanned: int
+    mail_id: Optional[str] = None
+    matched: Optional[bool] = None
+    #: Full cached row (including ``body_text``) when ``mail_id`` was in the request.
+    tested_mail: Optional[FetchedEmailContentRead] = None
+
+
+class RegexSpanRead(BaseModel):
+    """Inclusive start, exclusive end (Python ``Match.span``) in the haystack string."""
+
+    start: int
+    end: int
+
+
+class RegexGroupSpanRead(BaseModel):
+    """One capturing group that participated in the match (1-based ``index``)."""
+
+    index: int
+    name: Optional[str] = None
+    start: int
+    end: int
+
+
+class RegexFieldPreviewRead(BaseModel):
+    """Result of applying one optional extract regex to a haystack."""
+
+    skipped: bool = False
+    haystack: str = ""
+    regex_error: Optional[str] = None
+    matched: Optional[bool] = None
+    extracted_value: Optional[str] = None
+    full_match: Optional[RegexSpanRead] = None
+    groups: list[RegexGroupSpanRead] = []
+
+
+class ExtractRegexPreviewRequest(BaseModel):
+    """Evaluate extract regexes against one cached mail (by provider ``mail_id``)."""
+
+    mail_id: str
+    subject_extract_regex: Optional[str] = None
+    body_extract_regex: Optional[str] = None
+    snippet_extract_regex: Optional[str] = None
+
+
+class ExtractRegexPreviewResponse(BaseModel):
+    """Match spans for UI highlighting; body haystack mirrors parser preview (body, else snippet)."""
+
+    mail_id: str
+    subject: RegexFieldPreviewRead
+    body: RegexFieldPreviewRead
+    snippet: RegexFieldPreviewRead
+
+
 class FetchedEmailWithLinkedTransactionsRead(FetchedEmailRead):
     """Cached email with enrichment and at least one ledger row for the same ``mail_id``."""
 

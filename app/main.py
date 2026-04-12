@@ -110,7 +110,7 @@ def create_app(*, serve_frontend: bool | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def log_request(request: Request, call_next):
-        logger.info("Request: %s %s", request.method, request.url.path)
+        # logger.info("Request: %s %s", request.method, request.url.path)
         return await call_next(request)
     return app
 

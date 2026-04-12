@@ -6,6 +6,7 @@ surrogate ``FetchedEmail.id`` (the response includes ``id`` at the top level for
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, time, timezone
 from typing import Optional
 
@@ -19,20 +20,70 @@ from backend.app.models.fetched_email_enrichment import FetchedEmailEnrichment
 from backend.app.models.parser import Parser
 from backend.app.models.unparsed_message import UnparsedMessage
 from backend.app.schemas import (
+    ExtractRegexPreviewRequest,
+    ExtractRegexPreviewResponse,
+    FetchedEmailContentRead,
     FetchedEmailEnrichmentDetailRead,
     FetchedEmailRead,
     FetchedEmailWithEnrichmentResponse,
     FetchedEmailWithLinkedTransactionsRead,
+    MatcherPreviewItemRead,
+    MatcherPreviewRequest,
+    MatcherPreviewResponse,
+    RegexFieldPreviewRead,
     UnparsedEmailDetailRead,
     UnparsedEmailListItem,
 )
 from backend.app.services.fetched_email_service import (
     list_top_emails_with_transaction_and_enrichment,
 )
+from backend.app.services.regex_preview import regex_field_preview
 from backend.database import get_db
 from backend.ingestion.pipeline import reprocess_one_from_fetched
 
 router = APIRouter()
+
+
+def _compile_optional_regex(value: str | None, field: str) -> re.Pattern[str] | None:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    try:
+        return re.compile(raw)
+    except re.error as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid {field} regex: {exc}") from exc
+
+
+def _matches(rx: re.Pattern[str] | None, text: str | None) -> bool:
+    if rx is None:
+        return True
+    return bool(rx.search(text or ""))
+
+
+def _all_match(
+    *,
+    subject_rx: re.Pattern[str] | None,
+    sender_rx: re.Pattern[str] | None,
+    body_rx: re.Pattern[str] | None,
+    email: FetchedEmail,
+) -> bool:
+    return (
+        _matches(subject_rx, email.subject)
+        and _matches(sender_rx, email.sender)
+        and _matches(body_rx, email.body_text)
+    )
+
+
+def _matcher_preview_item(email: FetchedEmail) -> MatcherPreviewItemRead:
+    return MatcherPreviewItemRead(
+        mail_id=email.mail_id,
+        subject=email.subject,
+        sender=email.sender,
+        snippet=email.snippet,
+        body_text=email.body_text or "",
+        internal_date_ms=email.internal_date_ms,
+        created_at=email.created_at,
+    )
 
 
 def _enrichment_detail(
@@ -233,6 +284,144 @@ async def reprocess_email_by_mail_id(
     except KeyError:
         raise HTTPException(status_code=404, detail="Email not found") from None
     return {"mail_id": mail_id, "stats": stats}
+
+
+@router.get(
+    "/{mail_id}/content",
+    response_model=FetchedEmailContentRead,
+    summary="Get cached email content by mail_id (no enrichment)",
+)
+async def get_email_content_by_mail_id(
+    mail_id: str = Path(..., min_length=1),
+    db: Session = Depends(get_db),
+) -> FetchedEmailContentRead:
+    email = db.execute(select(FetchedEmail).where(FetchedEmail.mail_id == mail_id)).scalar_one_or_none()
+    if email is None:
+        raise HTTPException(status_code=404, detail="Email not found")
+    return FetchedEmailContentRead.model_validate(email)
+
+
+@router.post(
+    "/match-preview",
+    response_model=MatcherPreviewResponse,
+    summary="Preview matcher hits: top N recent mails, or one mail by mail_id",
+)
+async def matcher_preview(
+    payload: MatcherPreviewRequest,
+    db: Session = Depends(get_db),
+) -> MatcherPreviewResponse:
+    """
+    With ``mail_id``: load that cached row and set ``matched`` (``items`` includes that mail).
+    Without ``mail_id``: scan newest mails in ``lookback_days`` until ``limit`` matches (max 10).
+    """
+    subject_rx = _compile_optional_regex(payload.subject_match_regex, "subject")
+    sender_rx = _compile_optional_regex(payload.sender_match_regex, "sender")
+    body_rx = _compile_optional_regex(payload.body_match_regex, "body")
+    has_matchers = subject_rx is not None or sender_rx is not None or body_rx is not None
+
+    mail_id = (payload.mail_id or "").strip()
+    if mail_id:
+        email = db.execute(select(FetchedEmail).where(FetchedEmail.mail_id == mail_id)).scalar_one_or_none()
+        if email is None:
+            raise HTTPException(status_code=404, detail="Email not found")
+        content = FetchedEmailContentRead.model_validate(email)
+        if not has_matchers:
+            return MatcherPreviewResponse(
+                items=[],
+                scanned=1,
+                mail_id=mail_id,
+                matched=None,
+                tested_mail=content,
+            )
+        ok = _all_match(subject_rx=subject_rx, sender_rx=sender_rx, body_rx=body_rx, email=email)
+        return MatcherPreviewResponse(
+            items=[_matcher_preview_item(email)],
+            scanned=1,
+            mail_id=mail_id,
+            matched=ok,
+            tested_mail=content,
+        )
+
+    limit = int(payload.limit or 0)
+    if limit < 1:
+        raise HTTPException(status_code=400, detail="limit must be >= 1")
+    if limit > 10:
+        raise HTTPException(status_code=400, detail="limit must be <= 10")
+
+    lookback_days = int(payload.lookback_days or 0)
+    if lookback_days < 1:
+        raise HTTPException(status_code=400, detail="lookback_days must be >= 1")
+    if lookback_days > 3650:
+        raise HTTPException(status_code=400, detail="lookback_days is too large")
+
+    if not has_matchers:
+        return MatcherPreviewResponse(items=[], scanned=0, mail_id=None, matched=None)
+
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    min_ms = now_ms - (lookback_days * 24 * 60 * 60 * 1000)
+
+    items: list[MatcherPreviewItemRead] = []
+    scanned = 0
+
+    batch_size = 100
+    max_scanned = 2000
+    offset = 0
+
+    while len(items) < limit and scanned < max_scanned:
+        stmt = (
+            select(FetchedEmail)
+            .where(FetchedEmail.internal_date_ms >= min_ms)
+            .order_by(FetchedEmail.internal_date_ms.desc(), FetchedEmail.id.desc())
+            .offset(offset)
+            .limit(batch_size)
+        )
+        batch = list(db.scalars(stmt).all())
+        if not batch:
+            break
+
+        for email in batch:
+            scanned += 1
+            if _all_match(subject_rx=subject_rx, sender_rx=sender_rx, body_rx=body_rx, email=email):
+                items.append(_matcher_preview_item(email))
+                if len(items) >= limit:
+                    break
+
+            if scanned >= max_scanned:
+                break
+
+        offset += batch_size
+
+    return MatcherPreviewResponse(items=items, scanned=scanned, mail_id=None, matched=None)
+
+
+@router.post(
+    "/extract-regex-preview",
+    response_model=ExtractRegexPreviewResponse,
+    summary="Extract-regex preview: match spans for one cached mail",
+)
+async def extract_regex_preview(
+    payload: ExtractRegexPreviewRequest,
+    db: Session = Depends(get_db),
+) -> ExtractRegexPreviewResponse:
+    """Return first-match spans per field for highlighting (regex evaluated server-side only)."""
+    mail_id = (payload.mail_id or "").strip()
+    if not mail_id:
+        raise HTTPException(status_code=400, detail="mail_id is required")
+    email = db.execute(select(FetchedEmail).where(FetchedEmail.mail_id == mail_id)).scalar_one_or_none()
+    if email is None:
+        raise HTTPException(status_code=404, detail="Email not found")
+
+    body_haystack = (email.body_text or "") or (email.snippet or "")
+    subject_raw = regex_field_preview(payload.subject_extract_regex, email.subject or "")
+    body_raw = regex_field_preview(payload.body_extract_regex, body_haystack)
+    snippet_raw = regex_field_preview(payload.snippet_extract_regex, email.snippet or "")
+
+    return ExtractRegexPreviewResponse(
+        mail_id=mail_id,
+        subject=RegexFieldPreviewRead.model_validate(subject_raw),
+        body=RegexFieldPreviewRead.model_validate(body_raw),
+        snippet=RegexFieldPreviewRead.model_validate(snippet_raw),
+    )
 
 
 @router.get(
