@@ -84,3 +84,40 @@ class AccountUpsertRead(BaseModel):
     account_id: str
     account_type: Optional[str] = None
     display_name: Optional[str] = None
+
+
+class MerchantFromTransactionsRead(BaseModel):
+    """Transactions rolled up by trimmed ``merchant`` in a date range."""
+
+    merchant: str
+    credit_amount: float = Field(..., ge=0)
+    debit_amount: float = Field(..., ge=0)
+    amount: float = Field(
+        ...,
+        description="Net of credits minus debits (``credit_amount - debit_amount``).",
+    )
+    credit_count: int = Field(..., ge=0)
+    debit_count: int = Field(..., ge=0)
+    count: int = Field(..., ge=0)
+
+
+class CounterpartyFromTransactionsRead(BaseModel):
+    """Transactions rolled up by trimmed ``counterparty_name`` in a date range."""
+
+    counterparty: str
+    credit_amount: float = Field(..., ge=0)
+    debit_amount: float = Field(..., ge=0)
+    amount: float = Field(
+        ...,
+        description="Net of credits minus debits (``credit_amount - debit_amount``).",
+    )
+    credit_count: int = Field(..., ge=0)
+    debit_count: int = Field(..., ge=0)
+    count: int = Field(..., ge=0)
+
+
+class PartyRollupsRead(BaseModel):
+    """Merchant and counterparty rollups from transactions (see ``kind`` filter on the API)."""
+
+    merchants: list[MerchantFromTransactionsRead] = Field(default_factory=list)
+    counterparties: list[CounterpartyFromTransactionsRead] = Field(default_factory=list)

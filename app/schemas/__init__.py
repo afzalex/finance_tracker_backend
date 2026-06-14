@@ -15,6 +15,9 @@ from backend.app.schemas.accounts import (
     AccountTransactionsConflictEntry,
     AccountUpsert,
     AccountUpsertRead,
+    CounterpartyFromTransactionsRead,
+    MerchantFromTransactionsRead,
+    PartyRollupsRead,
 )
 from backend.app.schemas.analytics import (
     CashflowPoint,
@@ -72,6 +75,9 @@ __all__ = [
     "AccountTransactionsConflictEntry",
     "AccountUpsert",
     "AccountUpsertRead",
+    "CounterpartyFromTransactionsRead",
+    "MerchantFromTransactionsRead",
+    "PartyRollupsRead",
     "AccountType",
     "AppConfigRead",
     "AppConfigUpdate",

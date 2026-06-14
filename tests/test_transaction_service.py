@@ -127,8 +127,8 @@ def test_list_transactions_date_range(db: Session):
     service = TransactionService(db)
     # Between Jan 10 and Jan 15 inclusive
     params = TransactionListParams(
-        date_from=datetime.date(2024, 1, 10),
-        date_to=datetime.date(2024, 1, 15)
+        from_=datetime.date(2024, 1, 10),
+        to=datetime.date(2024, 1, 15)
     )
     items, total = service.list_transactions(params)
     

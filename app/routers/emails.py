@@ -19,6 +19,7 @@ from backend.app.models.fetched_email import FetchedEmail
 from backend.app.models.fetched_email_enrichment import FetchedEmailEnrichment
 from backend.app.models.parser import Parser
 from backend.app.models.unparsed_message import UnparsedMessage
+from backend.app.query_params import DateRangeQuery, date_range_query
 from backend.app.schemas import (
     ExtractRegexPreviewRequest,
     ExtractRegexPreviewResponse,
@@ -165,31 +166,18 @@ async def get_email_by_surrogate_id(
 )
 async def list_unparsed_emails(
     db: Session = Depends(get_db),
-    from_date: Optional[date] = Query(
-        None,
-        alias="from",
-        description="Only rows whose mail ``internal_date_ms`` is on or after this UTC date.",
-    ),
-    to_date: Optional[date] = Query(
-        None,
-        alias="to",
-        description="Only rows whose mail ``internal_date_ms`` is on or before this UTC date (end of day).",
-    ),
-    date_from: Optional[date] = Query(None, description="Same as ``from``."),
-    date_to: Optional[date] = Query(None, description="Same as ``to``."),
+    dates: DateRangeQuery = Depends(date_range_query),
 ) -> list[UnparsedEmailListItem]:
     """Return unparsed rows with ``mail_id``, subject, ``mail_received_at`` (UTC from provider internal ms), and optional ``classification_reason`` from enrichment (newest first). Omits body and snippet."""
-    eff_from = from_date or date_from
-    eff_to = to_date or date_to
     stmt = (
         select(UnparsedMessage, FetchedEmail, FetchedEmailEnrichment)
         .join(FetchedEmail, UnparsedMessage.fetched_email_id == FetchedEmail.id)
         .outerjoin(FetchedEmailEnrichment, FetchedEmailEnrichment.fetched_email_id == FetchedEmail.id)
     )
-    if eff_from is not None:
-        stmt = stmt.where(FetchedEmail.internal_date_ms >= _utc_day_start_ms(eff_from))
-    if eff_to is not None:
-        stmt = stmt.where(FetchedEmail.internal_date_ms <= _utc_day_end_ms(eff_to))
+    if dates.from_ is not None:
+        stmt = stmt.where(FetchedEmail.internal_date_ms >= _utc_day_start_ms(dates.from_))
+    if dates.to is not None:
+        stmt = stmt.where(FetchedEmail.internal_date_ms <= _utc_day_end_ms(dates.to))
     stmt = stmt.order_by(UnparsedMessage.created_at.desc(), UnparsedMessage.id.desc())
     rows = db.execute(stmt).all()
     out: list[UnparsedEmailListItem] = []

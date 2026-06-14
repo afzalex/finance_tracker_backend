@@ -1,17 +1,22 @@
 """Accounts router — per-account activity and channel breakdown."""
 
-from datetime import date
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from backend.app.query_params import DateRangeQuery, date_range_query
 from backend.app.schemas import (
     AccountFromTransactionsMergedRead,
     AccountUpsert,
     AccountUpsertRead,
+    PartyRollupsRead,
 )
-from backend.app.services.account_service import list_accounts_from_transactions, upsert_account
+from backend.app.services.account_service import (
+    list_accounts_from_transactions,
+    list_party_rollups_from_transactions,
+    upsert_account,
+)
 from backend.database import get_db
 
 router = APIRouter()
@@ -37,28 +42,36 @@ async def put_account(
 )
 async def list_accounts(
     db: Session = Depends(get_db),
-    from_date: Optional[date] = Query(
-        None,
-        alias="from",
-        description="Only include transactions on or after this date (YYYY-MM-DD).",
-    ),
-    to_date: Optional[date] = Query(
-        None,
-        alias="to",
-        description="Only include transactions on or before this date (YYYY-MM-DD), end of day.",
-    ),
-    date_from: Optional[date] = Query(
-        None,
-        description="Same as ``from``.",
-    ),
-    date_to: Optional[date] = Query(
-        None,
-        description="Same as ``to``.",
-    ),
+    dates: DateRangeQuery = Depends(date_range_query),
 ) -> list[AccountFromTransactionsMergedRead]:
     """Transactions merged by ``account_id`` with amounts, counts, optional ``_conflict``."""
     return list_accounts_from_transactions(
         db,
-        date_from=from_date or date_from,
-        date_to=to_date or date_to,
+        from_=dates.from_,
+        to=dates.to,
+    )
+
+
+@router.get(
+    "/parties",
+    response_model=PartyRollupsRead,
+    summary="Merchant and counterparty rollups from transactions",
+)
+async def list_parties(
+    db: Session = Depends(get_db),
+    kind: Optional[Literal["merchant", "counterparty"]] = Query(
+        None,
+        description=(
+            "When omitted, return both ``merchants`` and ``counterparties``. "
+            "Use ``merchant`` or ``counterparty`` to return only that list (the other is empty)."
+        ),
+    ),
+    dates: DateRangeQuery = Depends(date_range_query),
+) -> PartyRollupsRead:
+    """Group non-excluded transactions by merchant and/or counterparty with debit/credit totals."""
+    return list_party_rollups_from_transactions(
+        db,
+        from_=dates.from_,
+        to=dates.to,
+        kind=kind,
     )

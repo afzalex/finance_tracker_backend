@@ -199,6 +199,181 @@ def test_accounts_list_respects_from_to_date_filter(db) -> None:
     assert body[0]["count"] == 1
 
 
+def test_parties_rollups_both_by_default(db) -> None:
+    db.add(
+        Transaction(
+            mail_id="m1",
+            transacted_at=datetime(2026, 2, 1, 12, 0, 0),
+            origin=Origin.EMAIL_ALERT,
+            amount="100",
+            amount_parsed=100.0,
+            currency="INR",
+            direction=Direction.DEBIT,
+            provider="P",
+            account_id="A",
+            merchant="Amazon",
+            counterparty_name="Amazon India",
+        )
+    )
+    db.add(
+        Transaction(
+            mail_id="m2",
+            transacted_at=datetime(2026, 2, 2, 12, 0, 0),
+            origin=Origin.EMAIL_ALERT,
+            amount="50",
+            amount_parsed=50.0,
+            currency="INR",
+            direction=Direction.CREDIT,
+            provider="P",
+            account_id="A",
+            merchant="Amazon",
+            counterparty_name="Amazon India",
+        )
+    )
+    db.add(
+        Transaction(
+            mail_id="m3",
+            transacted_at=datetime(2026, 2, 3, 12, 0, 0),
+            origin=Origin.EMAIL_ALERT,
+            amount="10",
+            amount_parsed=10.0,
+            currency="INR",
+            direction=Direction.DEBIT,
+            provider="P",
+            account_id="A",
+            merchant="Swiggy",
+            counterparty_name=None,
+        )
+    )
+    db.commit()
+
+    client, app = _client_with_db(db)
+    try:
+        r = client.get("/api/v1/accounts/parties")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert r.status_code == 200
+    body = r.json()
+    merchants = {x["merchant"]: x for x in body["merchants"]}
+    counterparties = {x["counterparty"]: x for x in body["counterparties"]}
+    assert len(merchants) == 2
+    amz = merchants["Amazon"]
+    assert amz["debit_amount"] == 100.0
+    assert amz["credit_amount"] == 50.0
+    assert amz["amount"] == -50.0
+    assert amz["count"] == 2
+    assert merchants["Swiggy"]["debit_amount"] == 10.0
+    assert len(counterparties) == 1
+    assert counterparties["Amazon India"]["amount"] == -50.0
+
+
+def test_parties_kind_merchant_only(db) -> None:
+    db.add(
+        Transaction(
+            mail_id="m1",
+            transacted_at=datetime(2026, 2, 1, 12, 0, 0),
+            origin=Origin.EMAIL_ALERT,
+            amount="10",
+            amount_parsed=10.0,
+            currency="INR",
+            direction=Direction.DEBIT,
+            provider="P",
+            account_id="A",
+            merchant="Shop",
+            counterparty_name="Payee",
+        )
+    )
+    db.commit()
+
+    client, app = _client_with_db(db)
+    try:
+        r = client.get("/api/v1/accounts/parties?kind=merchant")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["merchants"]) == 1
+    assert body["merchants"][0]["merchant"] == "Shop"
+    assert body["counterparties"] == []
+
+
+def test_parties_kind_counterparty_only(db) -> None:
+    db.add(
+        Transaction(
+            mail_id="m1",
+            transacted_at=datetime(2026, 2, 1, 12, 0, 0),
+            origin=Origin.EMAIL_ALERT,
+            amount="10",
+            amount_parsed=10.0,
+            currency="INR",
+            direction=Direction.DEBIT,
+            provider="P",
+            account_id="A",
+            merchant="Shop",
+            counterparty_name="Payee",
+        )
+    )
+    db.commit()
+
+    client, app = _client_with_db(db)
+    try:
+        r = client.get("/api/v1/accounts/parties?kind=counterparty")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["merchants"] == []
+    assert len(body["counterparties"]) == 1
+    assert body["counterparties"][0]["counterparty"] == "Payee"
+
+
+def test_parties_respects_from_to_date_filter(db) -> None:
+    db.add(
+        Transaction(
+            mail_id="d1",
+            transacted_at=datetime(2026, 1, 5, 12, 0, 0),
+            origin=Origin.EMAIL_ALERT,
+            amount="1",
+            amount_parsed=1.0,
+            currency="INR",
+            direction=Direction.DEBIT,
+            provider="P",
+            account_id="A",
+            merchant="OldShop",
+        )
+    )
+    db.add(
+        Transaction(
+            mail_id="d2",
+            transacted_at=datetime(2026, 3, 5, 12, 0, 0),
+            origin=Origin.EMAIL_ALERT,
+            amount="2",
+            amount_parsed=2.0,
+            currency="INR",
+            direction=Direction.DEBIT,
+            provider="P",
+            account_id="A",
+            merchant="NewShop",
+        )
+    )
+    db.commit()
+
+    client, app = _client_with_db(db)
+    try:
+        r = client.get("/api/v1/accounts/parties?from=2026-03-01&to=2026-03-31&kind=merchant")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["merchants"]) == 1
+    assert body["merchants"][0]["merchant"] == "NewShop"
+    assert body["merchants"][0]["debit_amount"] == 2.0
+
+
 def test_put_account_upsert_insert_and_update(db) -> None:
     client, app = _client_with_db(db)
     try:

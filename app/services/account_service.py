@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -17,6 +17,9 @@ from backend.app.schemas.accounts import (
     AccountTransactionsConflictEntry,
     AccountUpsert,
     AccountUpsertRead,
+    CounterpartyFromTransactionsRead,
+    MerchantFromTransactionsRead,
+    PartyRollupsRead,
 )
 
 
@@ -28,8 +31,8 @@ def _norm_at(v: Optional[str]) -> Optional[str]:
 def list_accounts_from_transactions(
     db: Session,
     *,
-    date_from: Optional[date] = None,
-    date_to: Optional[date] = None,
+    from_: Optional[date] = None,
+    to: Optional[date] = None,
 ) -> list[AccountFromTransactionsMergedRead]:
     """Group transactions by ``account_id`` (merged), with sums, counts, and optional ``_conflict``."""
     stmt = select(
@@ -46,10 +49,10 @@ def list_accounts_from_transactions(
         Transaction.account_id != "",
         Transaction.is_excluded.is_(False),
     )
-    if date_from is not None:
-        stmt = stmt.where(Transaction.transacted_at >= _day_start(date_from))
-    if date_to is not None:
-        stmt = stmt.where(Transaction.transacted_at <= _day_end(date_to))
+    if from_ is not None:
+        stmt = stmt.where(Transaction.transacted_at >= _day_start(from_))
+    if to is not None:
+        stmt = stmt.where(Transaction.transacted_at <= _day_end(to))
     stmt = stmt.group_by(
         Transaction.provider,
         Transaction.account_id,
@@ -171,6 +174,149 @@ def list_accounts_from_transactions(
             )
         )
     return out
+
+
+def _list_party_summaries_from_transactions(
+    db: Session,
+    label_column,
+    *,
+    from_: Optional[date] = None,
+    to: Optional[date] = None,
+) -> list[tuple[str, float, float, float, int, int, int]]:
+    """Group non-excluded rows by trimmed ``label_column``; return sorted summary tuples."""
+    trimmed = func.trim(label_column)
+    stmt = select(
+        trimmed.label("name"),
+        Transaction.direction,
+        func.sum(Transaction.amount_parsed).label("amount_sum"),
+        func.count().label("cnt"),
+    ).where(
+        label_column.isnot(None),
+        trimmed != "",
+        Transaction.is_excluded.is_(False),
+    )
+    if from_ is not None:
+        stmt = stmt.where(Transaction.transacted_at >= _day_start(from_))
+    if to is not None:
+        stmt = stmt.where(Transaction.transacted_at <= _day_end(to))
+    stmt = stmt.group_by(trimmed, Transaction.direction)
+    rows = db.execute(stmt).all()
+
+    by_name: dict[str, dict[str, float | int]] = defaultdict(
+        lambda: {
+            "credit_amount": 0.0,
+            "debit_amount": 0.0,
+            "credit_count": 0,
+            "debit_count": 0,
+        }
+    )
+    for r in rows:
+        name = str(r.name).strip()
+        if not name:
+            continue
+        bucket = by_name[name]
+        amt = float(r.amount_sum or 0.0)
+        c = int(r.cnt or 0)
+        if r.direction == Direction.CREDIT:
+            bucket["credit_amount"] = float(bucket["credit_amount"]) + amt
+            bucket["credit_count"] = int(bucket["credit_count"]) + c
+        else:
+            bucket["debit_amount"] = float(bucket["debit_amount"]) + amt
+            bucket["debit_count"] = int(bucket["debit_count"]) + c
+
+    out: list[tuple[str, float, float, float, int, int, int]] = []
+    for name in sorted(by_name.keys()):
+        b = by_name[name]
+        credit_amount = float(b["credit_amount"])
+        debit_amount = float(b["debit_amount"])
+        credit_count = int(b["credit_count"])
+        debit_count = int(b["debit_count"])
+        count = credit_count + debit_count
+        out.append(
+            (
+                name,
+                credit_amount,
+                debit_amount,
+                credit_amount - debit_amount,
+                credit_count,
+                debit_count,
+                count,
+            )
+        )
+    return out
+
+
+def list_merchants_from_transactions(
+    db: Session,
+    *,
+    from_: Optional[date] = None,
+    to: Optional[date] = None,
+) -> list[MerchantFromTransactionsRead]:
+    """Group transactions by ``merchant`` with debit/credit sums and counts."""
+    return [
+        MerchantFromTransactionsRead(
+            merchant=name,
+            credit_amount=credit_amount,
+            debit_amount=debit_amount,
+            amount=net_amount,
+            credit_count=credit_count,
+            debit_count=debit_count,
+            count=count,
+        )
+        for name, credit_amount, debit_amount, net_amount, credit_count, debit_count, count in _list_party_summaries_from_transactions(
+            db,
+            Transaction.merchant,
+            from_=from_,
+            to=to,
+        )
+    ]
+
+
+def list_counterparties_from_transactions(
+    db: Session,
+    *,
+    from_: Optional[date] = None,
+    to: Optional[date] = None,
+) -> list[CounterpartyFromTransactionsRead]:
+    """Group transactions by ``counterparty_name`` with debit/credit sums and counts."""
+    return [
+        CounterpartyFromTransactionsRead(
+            counterparty=name,
+            credit_amount=credit_amount,
+            debit_amount=debit_amount,
+            amount=net_amount,
+            credit_count=credit_count,
+            debit_count=debit_count,
+            count=count,
+        )
+        for name, credit_amount, debit_amount, net_amount, credit_count, debit_count, count in _list_party_summaries_from_transactions(
+            db,
+            Transaction.counterparty_name,
+            from_=from_,
+            to=to,
+        )
+    ]
+
+
+def list_party_rollups_from_transactions(
+    db: Session,
+    *,
+    from_: Optional[date] = None,
+    to: Optional[date] = None,
+    kind: Literal["merchant", "counterparty"] | None = None,
+) -> PartyRollupsRead:
+    """Return merchant and/or counterparty rollups; ``kind`` limits to one dimension."""
+    merchants: list[MerchantFromTransactionsRead] = []
+    counterparties: list[CounterpartyFromTransactionsRead] = []
+    if kind is None or kind == "merchant":
+        merchants = list_merchants_from_transactions(
+            db, from_=from_, to=to
+        )
+    if kind is None or kind == "counterparty":
+        counterparties = list_counterparties_from_transactions(
+            db, from_=from_, to=to
+        )
+    return PartyRollupsRead(merchants=merchants, counterparties=counterparties)
 
 
 def upsert_account(db: Session, body: AccountUpsert) -> AccountUpsertRead:

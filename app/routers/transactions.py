@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
+
+from backend.app.query_params import DateRangeQuery, date_range_query
 from sqlalchemy.orm import Session
 
 from backend.app.schemas import (
@@ -99,39 +100,19 @@ async def distinct_transaction_catalog(
             "and distinct ``merchant`` values (``merchants`` is unchanged)."
         ),
     ),
-    from_date: Optional[date] = Query(
-        None,
-        alias="from",
-        description="Start date (YYYY-MM-DD), inclusive; alias of ``date_from``.",
-    ),
-    to_date: Optional[date] = Query(
-        None,
-        alias="to",
-        description="End date (YYYY-MM-DD), inclusive; alias of ``date_to``.",
-    ),
-    date_from: Optional[date] = Query(
-        None,
-        description="Same as query param ``from`` (start date, YYYY-MM-DD).",
-    ),
-    date_to: Optional[date] = Query(
-        None,
-        description="Same as query param ``to`` (end date, YYYY-MM-DD).",
-    ),
+    dates: DateRangeQuery = Depends(date_range_query),
 ) -> TransactionDistinctCatalog:
     """Distinct ``provider``, ``merchant``, and ``counterparty_name`` values.
 
-    Optional ``from`` / ``to`` (or ``date_from`` / ``date_to``) limit to ``transacted_at`` in that
-    range, matching ``GET /transactions``.
+    Optional ``from`` / ``to`` limit to ``transacted_at`` in that range, matching ``GET /transactions``.
 
     Rows with no counterparty name (or no merchant where the UI uses counterparty) may contribute
     ``__NO_COUNTERPARTY__`` in ``counterparties`` (see ``unnamed_counterparty_key``).
     """
-    eff_from = from_date or date_from
-    eff_to = to_date or date_to
     providers, merchants, counterparties = TransactionService(db).distinct_catalog(
         include_merchants_in_counterparties=include_merchants_in_counterparties,
-        date_from=eff_from,
-        date_to=eff_to,
+        from_=dates.from_,
+        to=dates.to,
     )
     return TransactionDistinctCatalog(
         providers=providers,
@@ -149,24 +130,7 @@ async def list_transactions(
     provider: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
     direction: Optional[Direction] = Query(None),
-    from_date: Optional[date] = Query(
-        None,
-        alias="from",
-        description="Start date (YYYY-MM-DD), inclusive; alias of ``date_from``.",
-    ),
-    to_date: Optional[date] = Query(
-        None,
-        alias="to",
-        description="End date (YYYY-MM-DD), inclusive; alias of ``date_to``.",
-    ),
-    date_from: Optional[date] = Query(
-        None,
-        description="Same as query param ``from`` (start date, YYYY-MM-DD).",
-    ),
-    date_to: Optional[date] = Query(
-        None,
-        description="Same as query param ``to`` (end date, YYYY-MM-DD).",
-    ),
+    dates: DateRangeQuery = Depends(date_range_query),
     counterparty: Optional[str] = Query(
         None,
         description=(
@@ -184,8 +148,6 @@ async def list_transactions(
     ),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
 ) -> TransactionListResponse:
-    eff_from = from_date or date_from
-    eff_to = to_date or date_to
     service = TransactionService(db)
     items, total = service.list_transactions(
         TransactionListParams(
@@ -195,8 +157,8 @@ async def list_transactions(
             provider=provider,
             category=category,
             direction=direction,
-            date_from=eff_from,
-            date_to=eff_to,
+            from_=dates.from_,
+            to=dates.to,
             counterparty=counterparty,
             search=search,
             sort_by=sort_by,

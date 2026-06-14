@@ -53,6 +53,19 @@ from backend.ingestion.parsers import TransactionParser
 
 logger = logging.getLogger(__name__)
 
+
+class IngestCancelled(Exception):
+    """Cooperative stop requested (e.g. admin mail ingest cancel)."""
+
+    def __init__(self, stats: dict) -> None:
+        self.stats = stats
+        super().__init__("ingest cancelled")
+
+
+def _ingest_cancel_requested(args: argparse.Namespace) -> bool:
+    ev = getattr(args, "cancel_event", None)
+    return ev is not None and ev.is_set()
+
 def _gmail_token_present_in_db() -> bool:
     try:
         with SessionLocal() as db:
@@ -385,6 +398,9 @@ def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> dict:
             stubs_iter = _fetch_full(client, mail_scope_id=mail_scope_id)
 
     for stub in stubs_iter:
+        if _ingest_cancel_requested(args):
+            _log_ingest_summary(stats)
+            raise IngestCancelled(stats)
         msg = client.get_message(stub["id"])
         email = extract_email_content(msg)
         _process_one_email(

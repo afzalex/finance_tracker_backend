@@ -59,8 +59,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ── export ────────────────────────────────────────────────────────────────
     export_p = sub.add_parser("export", help="Export transactions to a CSV file.")
-    export_p.add_argument("--from", dest="date_from", required=True, help="Start date (YYYY-MM-DD).")
-    export_p.add_argument("--to", dest="date_to", required=True, help="End date (YYYY-MM-DD).")
+    export_p.add_argument("--from", dest="from_", required=True, help="Start date (YYYY-MM-DD).")
+    export_p.add_argument("--to", dest="to", required=True, help="End date (YYYY-MM-DD).")
     export_p.add_argument("--out", default="export.csv", help="Output file path.")
 
     # ── stats ─────────────────────────────────────────────────────────────────

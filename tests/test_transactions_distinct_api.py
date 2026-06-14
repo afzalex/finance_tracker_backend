@@ -131,8 +131,8 @@ def test_distinct_catalog_date_range(db) -> None:
     db.commit()
 
     p, m, c = TransactionService(db).distinct_catalog(
-        date_from=date(2026, 1, 1),
-        date_to=date(2026, 1, 31),
+        from_=date(2026, 1, 1),
+        to=date(2026, 1, 31),
     )
     assert p == ["OnlyJan"]
     assert m == ["JanMerchant"]

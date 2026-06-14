@@ -20,8 +20,8 @@ class TransactionListParams:
     provider: str | None = None
     category: str | None = None
     direction: Direction | None = None
-    date_from: date | None = None
-    date_to: date | None = None
+    from_: date | None = None
+    to: date | None = None
     counterparty: str | None = None
     search: str | None = None
     sort_by: str = (
@@ -39,13 +39,13 @@ def _day_end(d: date) -> datetime:
     return datetime.combine(d, time.max)
 
 
-def _distinct_date_clauses(date_from: date | None, date_to: date | None) -> list:
+def _distinct_date_clauses(from_: date | None, to: date | None) -> list:
     """``transacted_at`` bounds for distinct-catalog queries (inclusive days)."""
     clauses: list = []
-    if date_from is not None:
-        clauses.append(Transaction.transacted_at >= _day_start(date_from))
-    if date_to is not None:
-        clauses.append(Transaction.transacted_at <= _day_end(date_to))
+    if from_ is not None:
+        clauses.append(Transaction.transacted_at >= _day_start(from_))
+    if to is not None:
+        clauses.append(Transaction.transacted_at <= _day_end(to))
     return clauses
 
 
@@ -59,10 +59,10 @@ def _apply_transaction_filters(stmt: Select, params: TransactionListParams) -> S
         stmt = stmt.where(Transaction.category == params.category)
     if params.direction:
         stmt = stmt.where(Transaction.direction == params.direction)
-    if params.date_from:
-        stmt = stmt.where(Transaction.transacted_at >= _day_start(params.date_from))
-    if params.date_to:
-        stmt = stmt.where(Transaction.transacted_at <= _day_end(params.date_to))
+    if params.from_:
+        stmt = stmt.where(Transaction.transacted_at >= _day_start(params.from_))
+    if params.to:
+        stmt = stmt.where(Transaction.transacted_at <= _day_end(params.to))
     if params.counterparty:
         cp = params.counterparty.strip()
         if cp == DISTINCT_UNNAMED_COUNTERPARTY:
@@ -106,31 +106,31 @@ class TransactionService:
         self,
         column,
         *,
-        date_from: date | None = None,
-        date_to: date | None = None,
+        from_: date | None = None,
+        to: date | None = None,
     ) -> set[str]:
         stmt = select(column).where(column.isnot(None))
-        for clause in _distinct_date_clauses(date_from, date_to):
+        for clause in _distinct_date_clauses(from_, to):
             stmt = stmt.where(clause)
         stmt = stmt.distinct()
         rows = self.db.scalars(stmt).all()
         return {str(v).strip() for v in rows if v is not None and str(v).strip()}
 
     def _has_unnamed_merchant_rows(
-        self, *, date_from: date | None = None, date_to: date | None = None
+        self, *, from_: date | None = None, to: date | None = None
     ) -> bool:
         stmt = (
             select(func.count())
             .select_from(Transaction)
             .where(or_(Transaction.merchant.is_(None), func.trim(Transaction.merchant) == ""))
         )
-        for clause in _distinct_date_clauses(date_from, date_to):
+        for clause in _distinct_date_clauses(from_, to):
             stmt = stmt.where(clause)
         n = self.db.scalar(stmt)
         return (n or 0) > 0
 
     def _has_unnamed_counterparty_rows(
-        self, *, date_from: date | None = None, date_to: date | None = None
+        self, *, from_: date | None = None, to: date | None = None
     ) -> bool:
         stmt = (
             select(func.count())
@@ -142,7 +142,7 @@ class TransactionService:
                 )
             )
         )
-        for clause in _distinct_date_clauses(date_from, date_to):
+        for clause in _distinct_date_clauses(from_, to):
             stmt = stmt.where(clause)
         n = self.db.scalar(stmt)
         return (n or 0) > 0
@@ -151,26 +151,26 @@ class TransactionService:
         self,
         *,
         include_merchants_in_counterparties: bool = False,
-        date_from: date | None = None,
-        date_to: date | None = None,
+        from_: date | None = None,
+        to: date | None = None,
     ) -> tuple[list[str], list[str], list[str]]:
         """Return sorted unique providers, merchants, and counterparties.
 
-        When ``date_from`` / ``date_to`` are set, only transactions in that ``transacted_at`` range
+        When ``from`` / ``to`` are set, only transactions in that ``transacted_at`` range
         (inclusive calendar days) are considered — same semantics as ``GET /transactions``.
 
         When some rows have no counterparty name, or no merchant (null/blank) so display falls back,
         ``DISTINCT_UNNAMED_COUNTERPARTY`` may be added to ``counterparties`` for filtering those rows.
         """
-        providers = sorted(self._distinct_trimmed_strings(Transaction.provider, date_from=date_from, date_to=date_to))
-        merchants_set = self._distinct_trimmed_strings(Transaction.merchant, date_from=date_from, date_to=date_to)
+        providers = sorted(self._distinct_trimmed_strings(Transaction.provider, from_=from_, to=to))
+        merchants_set = self._distinct_trimmed_strings(Transaction.merchant, from_=from_, to=to)
         merchants = sorted(merchants_set)
 
         counterparty_set = self._distinct_trimmed_strings(
-            Transaction.counterparty_name, date_from=date_from, date_to=date_to
+            Transaction.counterparty_name, from_=from_, to=to
         )
-        if self._has_unnamed_counterparty_rows(date_from=date_from, date_to=date_to) or self._has_unnamed_merchant_rows(
-            date_from=date_from, date_to=date_to
+        if self._has_unnamed_counterparty_rows(from_=from_, to=to) or self._has_unnamed_merchant_rows(
+            from_=from_, to=to
         ):
             counterparty_set = counterparty_set | {DISTINCT_UNNAMED_COUNTERPARTY}
 

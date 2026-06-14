@@ -8,6 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from backend.app.query_params import DateRangeQuery, date_range_query
 from backend.app.schemas import (
     CategoryBreakdown,
     CashflowPoint,
@@ -33,22 +34,16 @@ def _twelve_month_window_start(anchor: date) -> date:
 
 
 def _effective_cashflow_range(
-    from_date: Optional[date],
-    to_date: Optional[date],
-    date_from: Optional[date],
-    date_to: Optional[date],
+    from_: Optional[date],
+    to: Optional[date],
 ) -> tuple[date, date]:
     """Resolve inclusive ``from``/``to`` for cashflow; default last 12 months through today when both absent."""
-    eff_from = from_date or date_from
-    eff_to = to_date or date_to
-    if eff_from is None and eff_to is None:
+    if from_ is None and to is None:
         eff_to = date.today()
         eff_from = _twelve_month_window_start(eff_to)
         return eff_from, eff_to
-    if eff_to is None:
-        eff_to = date.today()
-    if eff_from is None:
-        eff_from = _twelve_month_window_start(eff_to)
+    eff_to = to if to is not None else date.today()
+    eff_from = from_ if from_ is not None else _twelve_month_window_start(eff_to)
     return eff_from, eff_to
 
 
@@ -63,23 +58,10 @@ async def transaction_summary(
     provider: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
     direction: Optional[Direction] = Query(None),
-    from_date: Optional[date] = Query(
-        None,
-        alias="from",
-        description="Start date (YYYY-MM-DD), inclusive.",
-    ),
-    to_date: Optional[date] = Query(
-        None,
-        alias="to",
-        description="End date (YYYY-MM-DD), inclusive end of day.",
-    ),
-    date_from: Optional[date] = Query(None, description="Same as ``from``."),
-    date_to: Optional[date] = Query(None, description="Same as ``to``."),
+    dates: DateRangeQuery = Depends(date_range_query),
     search: Optional[str] = Query(None, description="Search by merchant or payee"),
 ) -> TransactionSummaryRead:
     """Aggregate sums and counts over transactions using the same filters as ``GET /transactions``."""
-    eff_from = from_date or date_from
-    eff_to = to_date or date_to
     ca, da, cc, dc = TransactionService(db).transaction_summary(
         TransactionListParams(
             page=1,
@@ -88,8 +70,8 @@ async def transaction_summary(
             provider=provider,
             category=category,
             direction=direction,
-            date_from=eff_from,
-            date_to=eff_to,
+            from_=dates.from_,
+            to=dates.to,
             search=search,
         )
     )
@@ -110,25 +92,14 @@ async def cashflow(
     provider: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
     direction: Optional[Direction] = Query(None),
-    from_date: Optional[date] = Query(
-        None,
-        alias="from",
-        description="Start date (YYYY-MM-DD), inclusive. With ``to`` omitted, defaults to 12 months before ``to``.",
-    ),
-    to_date: Optional[date] = Query(
-        None,
-        alias="to",
-        description="End date (YYYY-MM-DD), inclusive end of day. With ``from`` omitted, defaults to today.",
-    ),
-    date_from: Optional[date] = Query(None, description="Same as ``from``."),
-    date_to: Optional[date] = Query(None, description="Same as ``to``."),
+    dates: DateRangeQuery = Depends(date_range_query),
     search: Optional[str] = Query(None, description="Search by merchant or payee"),
 ) -> list[CashflowPoint]:
     """Monthly credit, debit, net, and counts; same filters as ``GET /transactions``.
 
     When both ``from`` and ``to`` are omitted, uses the last 12 calendar months through today.
     """
-    eff_from, eff_to = _effective_cashflow_range(from_date, to_date, date_from, date_to)
+    eff_from, eff_to = _effective_cashflow_range(dates.from_, dates.to)
     return AnalyticsService(db).monthly_cashflow(
         TransactionListParams(
             page=1,
@@ -137,8 +108,8 @@ async def cashflow(
             provider=provider,
             category=category,
             direction=direction,
-            date_from=eff_from,
-            date_to=eff_to,
+            from_=eff_from,
+            to=eff_to,
             search=search,
         )
     )
@@ -148,8 +119,7 @@ async def cashflow(
 async def category_breakdown(
     db: Session = Depends(get_db),
     month: Optional[str] = Query(None, description="Filter to a specific month (YYYY-MM)"),
-    date_from: Optional[str] = Query(None),
-    date_to: Optional[str] = Query(None),
+    dates: DateRangeQuery = Depends(date_range_query),
 ) -> list[CategoryBreakdown]:
     """Spending by category.
 
@@ -170,26 +140,13 @@ async def top_merchants(
     account_id: Optional[str] = Query(None),
     provider: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
-    from_date: Optional[date] = Query(
-        None,
-        alias="from",
-        description="Start date (YYYY-MM-DD), inclusive.",
-    ),
-    to_date: Optional[date] = Query(
-        None,
-        alias="to",
-        description="End date (YYYY-MM-DD), inclusive end of day.",
-    ),
-    date_from: Optional[date] = Query(None, description="Same as ``from``."),
-    date_to: Optional[date] = Query(None, description="Same as ``to``."),
+    dates: DateRangeQuery = Depends(date_range_query),
     search: Optional[str] = Query(None, description="Search by merchant or payee"),
 ) -> list[MerchantSummary]:
     """Top payees by DEBIT ``amount_parsed``: group by merchant, else counterparty name, else ``__UNDEFINED__``.
 
     Same filters as ``GET /transactions`` except ``direction`` is ignored.
     """
-    eff_from = from_date or date_from
-    eff_to = to_date or date_to
     params = TransactionListParams(
         page=1,
         page_size=1,
@@ -197,8 +154,8 @@ async def top_merchants(
         provider=provider,
         category=category,
         direction=None,
-        date_from=eff_from,
-        date_to=eff_to,
+        from_=dates.from_,
+        to=dates.to,
         search=search,
     )
     try:
