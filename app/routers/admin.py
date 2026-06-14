@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from datetime import datetime, timezone
 import logging
@@ -20,7 +21,8 @@ from backend.ingestion.gmail.auth import (
     persist_gmail_oauth_credentials,
 )
 from backend.database import get_db
-from backend.ingestion.pipeline import reprocess_all_from_fetched
+from backend.ingestion.mail.errors import MailProviderAuthError
+from backend.ingestion.pipeline import mail_force_ingest_args, reprocess_all_from_fetched, run_ingest
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -29,6 +31,8 @@ _GMAIL_OAUTH_PENDING: dict[str, dict] = {}
 
 _REPROCESS_JOBS: dict[str, dict] = {}
 _REPROCESS_PROCS: dict[str, subprocess.Popen] = {}
+
+_MAIL_INGEST_JOBS: dict[str, dict] = {}
 
 _ACTIVE_STATUSES = {"queued", "running"}
 
@@ -42,6 +46,44 @@ def _active_reprocess_job_id() -> str | None:
         if job.get("status") in _ACTIVE_STATUSES:
             return job_id
     return None
+
+
+def _active_mail_ingest_job_id() -> str | None:
+    for job_id, job in _MAIL_INGEST_JOBS.items():
+        if job.get("status") in _ACTIVE_STATUSES:
+            return job_id
+    return None
+
+
+def _run_mail_ingest_job(job_id: str, args) -> None:
+    try:
+        stats = run_ingest(args)
+        _MAIL_INGEST_JOBS[job_id] = {
+            "status": "completed",
+            "started_at": _MAIL_INGEST_JOBS.get(job_id, {}).get("started_at"),
+            "completed_at": _utc_now_iso(),
+            "lookback_days": _MAIL_INGEST_JOBS.get(job_id, {}).get("lookback_days"),
+            "stats": stats,
+        }
+        logger.info("admin.mail.ingest completed", extra={"job_id": job_id})
+    except MailProviderAuthError as exc:
+        _MAIL_INGEST_JOBS[job_id] = {
+            "status": "failed",
+            "started_at": _MAIL_INGEST_JOBS.get(job_id, {}).get("started_at"),
+            "completed_at": _utc_now_iso(),
+            "lookback_days": _MAIL_INGEST_JOBS.get(job_id, {}).get("lookback_days"),
+            "error": str(exc),
+        }
+        logger.warning("admin.mail.ingest auth failed", extra={"job_id": job_id})
+    except Exception as exc:  # noqa: BLE001
+        _MAIL_INGEST_JOBS[job_id] = {
+            "status": "failed",
+            "started_at": _MAIL_INGEST_JOBS.get(job_id, {}).get("started_at"),
+            "completed_at": _utc_now_iso(),
+            "lookback_days": _MAIL_INGEST_JOBS.get(job_id, {}).get("lookback_days"),
+            "error": str(exc),
+        }
+        logger.exception("admin.mail.ingest failed", extra={"job_id": job_id})
 
 
 def _monitor_reprocess_proc(job_id: str) -> None:
@@ -120,6 +162,79 @@ async def reprocess_all_emails_offline(
     _REPROCESS_PROCS[job_id] = proc
     Thread(target=_monitor_reprocess_proc, args=(job_id,), daemon=True).start()
     return {"job_id": job_id, "status": "running"}
+
+
+@router.get(
+    "/mail/ingest/{job_id}",
+    summary="Get status for a mail ingest job",
+)
+async def get_mail_ingest_job(job_id: str = Path(..., min_length=1)) -> dict:
+    job = _MAIL_INGEST_JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"job_id": job_id, **job}
+
+
+@router.post(
+    "/mail/ingest",
+    summary="Fetch and ingest mail from the last N days",
+)
+async def trigger_mail_ingest(
+    days: int = Query(
+        ...,
+        ge=1,
+        le=3650,
+        description=(
+            "Re-fetch messages from the last N calendar days, ignoring the stored cursor "
+            "(same as ``ingest --force`` with a custom lookback window)."
+        ),
+    ),
+    max_messages: int | None = Query(
+        None,
+        ge=1,
+        description="Optional cap on messages processed (newest first in the window).",
+    ),
+    wait: bool = Query(
+        False,
+        description=(
+            "If true, run synchronously and return ingest stats (can take a long time). "
+            "If false (default), start a background job and return immediately."
+        ),
+    ),
+) -> dict:
+    """Pull mail from the configured provider (Gmail today) and run the ingest pipeline."""
+    args = mail_force_ingest_args(lookback_days=days, max_messages=max_messages)
+
+    if wait:
+        logger.info("admin.mail.ingest sync requested", extra={"lookback_days": days})
+        try:
+            stats = await asyncio.to_thread(run_ingest, args)
+        except MailProviderAuthError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"lookback_days": days, "stats": stats}
+
+    active_job_id = _active_mail_ingest_job_id()
+    if active_job_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "A mail ingest job is already running",
+                "job_id": active_job_id,
+            },
+        )
+
+    job_id = uuid4().hex
+    _MAIL_INGEST_JOBS[job_id] = {
+        "status": "running",
+        "started_at": _utc_now_iso(),
+        "lookback_days": days,
+    }
+    logger.info(
+        "admin.mail.ingest queued",
+        extra={"job_id": job_id, "lookback_days": days},
+    )
+    Thread(target=_run_mail_ingest_job, args=(job_id, args), daemon=True).start()
+    return {"job_id": job_id, "status": "running", "lookback_days": days}
 
 
 @router.post(

@@ -205,7 +205,31 @@ def incremental_mail_ingest_tick_args() -> argparse.Namespace:
     )
 
 
-def run_ingest(args: argparse.Namespace) -> None:
+def mail_force_ingest_args(
+    *,
+    lookback_days: int,
+    max_messages: int | None = None,
+) -> argparse.Namespace:
+    """Args for ``ingest --force`` over a custom lookback window (same as CLI ``--force``).
+
+    ``lookback_days`` overrides ``app.mail.initial_lookback_days`` for this run only.
+    ``max_messages``, when set, caps how many newest messages in that window are processed.
+    """
+    return argparse.Namespace(
+        command="ingest",
+        mail=True,
+        unparsed=False,
+        offline=False,
+        poll=False,
+        once=None,
+        force=-1 if max_messages is None else max_messages,
+        lookback_days=lookback_days,
+        limit=None,
+        only_mail_id=None,
+    )
+
+
+def run_ingest(args: argparse.Namespace) -> dict | None:
     """Main ingest pipeline entry point.
 
     Dispatches to one of three fetch modes based on CLI flags:
@@ -221,12 +245,14 @@ def run_ingest(args: argparse.Namespace) -> None:
     with SessionLocal() as db:
         if getattr(args, "only_mail_id", None):
             _ingest_one_from_fetched(db, str(getattr(args, "only_mail_id")))
-        elif getattr(args, "offline", False):
+            return None
+        if getattr(args, "offline", False):
             _ingest_offline(db, limit=getattr(args, "limit", None))
-        elif getattr(args, "unparsed", False):
+            return None
+        if getattr(args, "unparsed", False):
             _ingest_from_unparsed(db, limit=getattr(args, "limit", None))
-        else:
-            _ingest_from_gmail(db, args)
+            return None
+        return _ingest_from_gmail(db, args)
 
 
 def run_poll(base_args: Optional[argparse.Namespace] = None) -> None:
@@ -291,7 +317,7 @@ def run_unparsed(args: argparse.Namespace) -> None:
 
 # ── Gmail fetch modes ──────────────────────────────────────────────────────────
 
-def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> None:
+def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> dict:
     """Fetch emails from Gmail and run the processing pipeline.
 
     Supports three sub-modes:
@@ -328,7 +354,13 @@ def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> None:
         stubs_iter = client.iter_message_stubs(query=query, max_results=once_n)
     elif force_arg is not None:
         max_in_window = None if force_arg < 0 else force_arg
-        stubs_iter = _fetch_full(client, max_results=max_in_window, mail_scope_id=mail_scope_id)
+        lookback_override = getattr(args, "lookback_days", None)
+        stubs_iter = _fetch_full(
+            client,
+            max_results=max_in_window,
+            mail_scope_id=mail_scope_id,
+            lookback_days=lookback_override,
+        )
     else:
         history_id = get_mail_scoped_config_value(
             db, CONFIG_KEY_INTERNAL_MAIL_GMAIL_HISTORY_ID, mail_scope_id
@@ -368,6 +400,7 @@ def _ingest_from_gmail(db: Session, args: argparse.Namespace) -> None:
         _save_cursor(db, client, mail_scope_id)
 
     _log_ingest_summary(stats)
+    return stats
 
 
 def _fetch_full(
@@ -375,17 +408,21 @@ def _fetch_full(
     *,
     max_results: Optional[int] = None,
     mail_scope_id: int | None = None,
+    lookback_days: Optional[int] = None,
 ) -> Iterator[dict]:
     """Build a lookback query and stream message stubs (newest first within the API order)."""
     with SessionLocal() as db:
         sid = mail_scope_id if mail_scope_id is not None else primary_gmail_mail_config_scope_id(db)
-        lookback_days = get_required_config_int(
-            db, CONFIG_KEY_APP_MAIL_INITIAL_LOOKBACK_DAYS, min_value=0
-        )
+        if lookback_days is None:
+            resolved_lookback = get_required_config_int(
+                db, CONFIG_KEY_APP_MAIL_INITIAL_LOOKBACK_DAYS, min_value=0
+            )
+        else:
+            resolved_lookback = lookback_days
         labels = get_required_config_csv_list_mail_scoped(
             db, CONFIG_KEY_APP_MAIL_GMAIL_LABELS, sid
         )
-    cutoff = datetime.now(tz=timezone.utc) - timedelta(days=lookback_days)
+    cutoff = datetime.now(tz=timezone.utc) - timedelta(days=resolved_lookback)
     label_q = _gmail_label_query(labels)
     query = f"{label_q} after:{cutoff.year}/{cutoff.month}/{cutoff.day}"
     return client.iter_message_stubs(query=query, max_results=max_results)
