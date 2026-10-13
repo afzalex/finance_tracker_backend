@@ -82,7 +82,8 @@ def create_app(*, serve_frontend: bool | None = None) -> FastAPI:
     app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
     app.include_router(metadata.router, prefix="/api/v1", tags=["Metadata"])
 
-    @app.api_route("/health", methods=["GET", "HEAD"], tags=["Health"])
+    @app.get("/health", tags=["Health"], operation_id="get_health")
+    @app.head("/health", include_in_schema=False)
     async def health() -> dict:
         """GET/HEAD liveness check for browsers, load balancers, and uptime monitors."""
         return {"status": "ok"}

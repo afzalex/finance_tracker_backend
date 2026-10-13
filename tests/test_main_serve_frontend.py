@@ -37,3 +37,12 @@ def test_health_supports_head_without_response_body() -> None:
 
     assert r.status_code == 200
     assert r.content == b""
+
+
+def test_health_head_is_excluded_from_openapi() -> None:
+    app = create_app(serve_frontend=False)
+
+    health_operations = app.openapi()["paths"]["/health"]
+
+    assert set(health_operations) == {"get"}
+    assert health_operations["get"]["operationId"] == "get_health"
