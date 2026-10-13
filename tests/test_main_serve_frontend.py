@@ -27,3 +27,13 @@ def test_health_unaffected_by_frontend_flag() -> None:
         r = client.get("/health")
         assert r.status_code == 200
         assert r.json() == {"status": "ok"}
+
+
+def test_health_supports_head_without_response_body() -> None:
+    app = create_app(serve_frontend=False)
+    client = TestClient(app)
+
+    r = client.head("/health")
+
+    assert r.status_code == 200
+    assert r.content == b""

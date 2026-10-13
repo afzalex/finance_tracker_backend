@@ -64,7 +64,7 @@ def create_app(*, serve_frontend: bool | None = None) -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.api_cors_origins,
-        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
 
@@ -82,9 +82,9 @@ def create_app(*, serve_frontend: bool | None = None) -> FastAPI:
     app.include_router(admin.router, prefix="/api/v1/admin", tags=["Admin"])
     app.include_router(metadata.router, prefix="/api/v1", tags=["Metadata"])
 
-    @app.get("/health", tags=["Health"])
+    @app.api_route("/health", methods=["GET", "HEAD"], tags=["Health"])
     async def health() -> dict:
-        """Liveness check — returns ``{"status": "ok"}`` when the server is running."""
+        """GET/HEAD liveness check for browsers, load balancers, and uptime monitors."""
         return {"status": "ok"}
 
     _serve = settings.api_serve_frontend if serve_frontend is None else serve_frontend
