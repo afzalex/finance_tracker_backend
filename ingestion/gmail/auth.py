@@ -35,6 +35,16 @@ class GmailAuthError(MailProviderAuthError):
     """Raised when Gmail authentication fails and user action is required."""
 
 
+def _refresh_error_code(exc: RefreshError) -> str | None:
+    """Return Google's OAuth error code from a ``RefreshError``, when present."""
+    for detail in exc.args:
+        if isinstance(detail, dict):
+            code = detail.get("error")
+            if isinstance(code, str) and code:
+                return code
+    return None
+
+
 def _primary_gmail_account_stmt():
     return (
         select(MailAccount)
@@ -133,14 +143,36 @@ def get_credentials() -> Credentials:
                     _maybe_backfill_gmail_email(db, row, creds)
                     return creds
                 except RefreshError as exc:
-                    logger.warning("Gmail refresh token revoked: %s", exc)
-                    if row is not None:
-                        row.token_json = None
-                        commit_with_retry(db)
+                    error_code = _refresh_error_code(exc)
+                    retryable = bool(getattr(exc, "retryable", False))
+
+                    # ``RefreshError`` also represents exhausted temporary failures
+                    # (Google 5xx responses, server_error, temporarily_unavailable).
+                    # Deleting the refresh token for those failures turns a transient
+                    # outage into an unnecessary OAuth reconnect.  Google documents
+                    # ``invalid_grant`` as the signal that the grant itself has expired
+                    # or been invalidated, so only that response warrants removal.
+                    if error_code == "invalid_grant" and not retryable:
+                        logger.warning("Gmail refresh token is no longer valid: %s", exc)
+                        if row is not None:
+                            row.token_json = None
+                            commit_with_retry(db)
+                        raise GmailAuthError(
+                            "Gmail token has expired or been revoked.\n"
+                            "Re-authenticate by running:\n"
+                            "  python -m backend.cli auth"
+                        ) from exc
+
+                    logger.warning(
+                        "Gmail token refresh failed; preserving the saved refresh token "
+                        "for the next attempt (error=%s, retryable=%s): %s",
+                        error_code or "unknown",
+                        retryable,
+                        exc,
+                    )
                     raise GmailAuthError(
-                        "Gmail token has expired or been revoked.\n"
-                        "Re-authenticate by running:\n"
-                        "  python -m backend.cli auth"
+                        "Gmail token refresh failed temporarily; the saved connection "
+                        "was retained and will be retried automatically."
                     ) from exc
 
             if not os.path.exists(credentials_file):
